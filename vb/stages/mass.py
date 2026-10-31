@@ -88,6 +88,7 @@ def run(ctx):
     for i, c in enumerate(cats):
         ax.text(by_cat[c] + 8, i, f"{by_cat[c]:.0f} g ({100*by_cat[c]/sum(by_cat.values()):.0f} %)", va="center", color=INK2)
     ax.set_xlabel("mass [g]")
+    ax.yaxis.grid(False)
     ax.set_xlim(0, max(by_cat.values()) * 1.3)
     ax.set_title(f"Mass by category - AUW {sum(by_cat.values()):.0f} g (plan component list)", loc="left")
     save(fig, ctx.dir / "mass_breakdown.png")

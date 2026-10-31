@@ -130,6 +130,7 @@ def run(ctx):
         ax[2].text(br[k] + 0.0003, i, f"{br[k]:.4f}", va="center", color=INK2, fontsize=8)
     ax[2].set(xlabel="CD contribution", title=f"Drag breakdown at {vc:g} m/s (CD {ds['drag_breakdown_cruise']['CD_total']:.4f})")
     ax[2].set_xlim(0, max(br.values()) * 1.35)
+    ax[2].yaxis.grid(False)
     from matplotlib.ticker import MaxNLocator
     ax[2].xaxis.set_major_locator(MaxNLocator(4))
     save(fig, out / "aero_summary.png")
