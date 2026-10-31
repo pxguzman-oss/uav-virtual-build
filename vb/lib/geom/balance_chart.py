@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # validated categorical palette (dataviz skill reference instance, light mode), fixed order
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
-GROUP_ORDER = ["printed", "carbon", "power", "propulsion", "servos", "avionics", "misc", "vtol"]
+GROUP_ORDER = ["printed", "carbon", "power", "propulsion", "servos", "avionics", "payload", "misc", "vtol"]
 INK, INK2, GRID = "#0b0b0b", "#52514e", "#d9d8d4"
 
 
@@ -34,7 +34,8 @@ def main(model_dir, out=None):
     groups += sorted({p["group"] for p in mp["parts"]} - set(groups))
     # fixed group->colour map: one green only (power), 'misc' neutral grey, target band neutral
     fixed = {"printed": PALETTE[0], "carbon": PALETTE[1], "power": PALETTE[2], "propulsion": PALETTE[3],
-             "servos": PALETTE[4], "avionics": PALETTE[6], "misc": "#8a8984", "vtol": PALETTE[7]}
+             "servos": PALETTE[4], "avionics": PALETTE[6], "misc": "#8a8984", "vtol": PALETTE[7],
+             "payload": "#8c564b"}
     spare = [c for c in PALETTE if c not in fixed.values()] + PALETTE
     gcol = {g: fixed.get(g) or spare[i % len(spare)] for i, g in enumerate(groups)}
 
@@ -123,7 +124,7 @@ def main(model_dir, out=None):
                    f"({'nose' if err < 0 else 'tail'}-heavy)")
         if mp.get("battery_shift_to_target_mm") is not None:
             verdict += f" - move battery {mp['battery_shift_to_target_mm']:+.0f} mm"
-    title = (f"{plan.get('name', '').title()}{' VTOL' if plan.get('options', {}).get('vtol') else ''} balance - "
+    title = (f"{plan.get('title') or plan.get('name', '').title()}{' VTOL' if plan.get('options', {}).get('vtol') else ''} balance - "
              f"{mp['mass_kg']*1000:.0f} g{verdict}")
     ax.set_title(title, loc="left", fontsize=16, fontweight="bold", color=INK, pad=40)
 

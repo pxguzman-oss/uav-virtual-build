@@ -91,7 +91,13 @@ def fmt(v):
         if v != v:
             return "-"
         a = abs(v)
-        return f"{v:.3g}" if a < 0.01 or a >= 1000 else f"{v:.3f}".rstrip("0").rstrip(".") if a < 10 else f"{v:.1f}"
+        if a < 1e-6:
+            return "0"
+        if a >= 1e5:
+            return f"{v:.3g}"
+        if a >= 1000:
+            return f"{v:.0f}"
+        return f"{v:.3g}" if a < 0.01 else f"{v:.3f}".rstrip("0").rstrip(".") if a < 10 else f"{v:.1f}"
     if isinstance(v, list):
         return "[" + ", ".join(fmt(x) for x in v[:6]) + (", ..." if len(v) > 6 else "") + "]"
     if isinstance(v, dict):
@@ -389,7 +395,7 @@ def run(ctx):
         ["variant / fidelity", f"{ctx.variant} / {ctx.fidelity}"],
         ["plan hash", (R.get("ingest") or {}).get("data", {}).get("plan_hash", "?")],
         ["pipeline (git)", ghash or "?"],
-        ["firmware (SITL)", f"{plan.get('avionics', {}).get('autopilot', {}).get('firmware', 'ArduPlane')} {vers.get('ardupilot', '?')}"],
+        ["firmware (SITL)", vers.get("ardupilot", "?") + f" (plan: {plan.get('avionics', {}).get('autopilot', {}).get('firmware_version', '?')})"],
         ["date", time.strftime("%Y-%m-%d %H:%M")],
         ["run wall time", f"{last.get('total_wall_s', 0)/60:.1f} min (this invocation; cached stages count 0)"]])
     D.p(f"VERDICT: {overall} - {n_fail} FAIL, {n_warn} WARN across {sum(1 for r in R.values() if r)} stages"

@@ -54,7 +54,7 @@ def run(ctx):
     if r.returncode != 0:
         raise RuntimeError("gen_model failed: " + r.stderr[-800:])
     sp = json.loads((gen / f"{m['name']}_static_perf.json").read_text())
-    ctx.gate("JSBSim tables: stall speed vs aero stage (|ratio-1|)", abs(sp["Vs_1g_mps"] / aero["V_stall"] - 1), 0.08, "<=", "WARN",
+    ctx.gate("JSBSim tables: stall speed vs aero stage abs(ratio-1)", abs(sp["Vs_1g_mps"] / aero["V_stall"] - 1), 0.08, "<=", "WARN",
              note=f"tables {sp['Vs_1g_mps']} m/s vs aero {aero['V_stall']:.2f} m/s (untrimmed vs trimmed CLmax)")
 
     # ---- derived ArduPilot parameters ---------------------------------------------------------

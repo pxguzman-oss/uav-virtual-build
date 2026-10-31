@@ -177,8 +177,13 @@ def run(ctx):
             if not weak and r.get("min_cas_after_release") is not None:
                 ctx.gate(f"{name}: min airspeed after release / Vs", r["min_cas_after_release"] / Vs, 1.1, ">=", "WARN")
         if name == "stall" and r.get("V_stall_1g_mean"):
-            ctx.gate("stall: SITL Vs(1g) vs aero stage (|ratio-1|)", abs(r["V_stall_1g_mean"] / Vs - 1), 0.10, "<=", "WARN",
+            ctx.gate("stall: SITL Vs(1g) vs aero stage abs(ratio-1)", abs(r["V_stall_1g_mean"] / Vs - 1), 0.10, "<=", "WARN",
                      note=f"SITL {r['V_stall_1g_mean']} m/s vs {Vs} m/s; alt loss {max((s['alt_loss_m'] for s in r.get('stalls', [])), default=0)} m")
+        if name == "stall" and r.get("stalls"):
+            st0 = r["stalls"][0]
+            ctx.gate("stall (FBWA, idle, full back stick): altitude lost / max roll", st0["alt_loss_m"], None, "info", "INFO", "m",
+                     note=f"max alpha {st0['max_alpha_deg']} deg, roll {st0['max_abs_roll_deg']} deg; keep STALL_PREVENTION=1 and "
+                          f"practise stalls above {max(30, 1.5 * st0['alt_loss_m']):.0f} m")
         if name.startswith("fs_") and name != "fs_batt":
             fc = r.get("first_mode_change_after_trigger") or {}
             ctx.gate(f"{name}: failsafe switches to RTL", fc.get("mode") == 11, True, "bool", "FAIL",

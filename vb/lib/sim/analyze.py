@@ -264,22 +264,29 @@ def analyze_stall(run, meta, tr, df, events, model):
     S = model["geometry"]["wing_area_m2"]
     out = []
     for k, st in enumerate(meta.get("stalls", [])):
-        d = tr[(tr.t >= st["t0"]) & (tr.t <= st["t1"] + 3)]
+        d = tr[(tr.t >= st["t0"]) & (tr.t <= st["t1"])]      # stick-hold window only: recovery pull-ups come later
         if len(d) < 10:
             continue
         cl = d.CL.values
-        i = int(np.argmax(cl >= 0.98 * cl.max()))   # FIRST break (later peaks are recovery pull-ups)
+        # FIRST break: first local maximum above 85 % of the window maximum (later peaks are recovery pull-ups)
+        thr = 0.85 * cl.max()
+        i = int(np.argmax(cl))
+        for j in range(1, len(cl) - 1):
+            if cl[j] >= thr and cl[j] >= cl[j - 1] and cl[j] >= cl[j + 1] and cl[j] >= cl[min(j + 25, len(cl) - 1)]:
+                i = j
+                break
         r = d.iloc[i]
         nz = max(float(r.nz), 0.2)
         rho = 1.225 * (r.V_cas / max(r.V_tas, 0.1)) ** 2 * (1.0)  # CAS-based -> use sea-level
         v_s1g = float(r.V_cas) / math.sqrt(nz)
-        after = d[d.t >= r.t]
+        dd = tr[(tr.t >= st["t0"]) & (tr.t <= st["t1"] + 10)]       # include the recovery
+        after = dd[dd.t >= r.t]
         out.append(dict(rep=k, t_stall=round(float(r.t), 2), CL_max_seen=round(float(r.CL), 3),
                         alpha_at_CLmax_deg=round(float(r.alpha_deg), 2), V_cas_at_CLmax=round(float(r.V_cas), 2),
                         nz=round(nz, 2), V_stall_1g_est=round(v_s1g, 2),
-                        min_cas=round(float(d.V_cas.min()), 2), max_alpha_deg=round(float(d.alpha_deg.max()), 1),
-                        alt_loss_m=round(float(d.h_agl.max() - after.h_agl.min()), 1),
-                        max_abs_roll_deg=round(float(d.phi_deg.abs().max()), 1)))
+                        min_cas=round(float(dd.V_cas.min()), 2), max_alpha_deg=round(float(dd.alpha_deg.max()), 1),
+                        alt_loss_m=round(float(dd.h_agl.max() - after.h_agl.min()), 1),
+                        max_abs_roll_deg=round(float(dd.phi_deg.abs().max()), 1)))
     res = {"stalls": out}
     if out:
         res["V_stall_1g_mean"] = round(float(np.mean([o["V_stall_1g_est"] for o in out])), 2)

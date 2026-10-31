@@ -40,7 +40,8 @@ def run(ctx):
     cg = mass["cg_m"]
     g, sa = geom2aero.build(plan, cg, mass["mass_kg"])
     g["vtol"] = False                                   # CFD answers clean-airframe questions
-    kind = cfg.get("kind", "wing")
+    full = ctx.fidelity == "full"
+    kind = cfg.get("kind_full", cfg.get("kind", "wing")) if full else cfg.get("kind", "wing")
     alphas = cfg.get("alphas_full", [0, 4, 8]) if ctx.fidelity == "full" else cfg.get("alphas_standard", [4])
     V = float(plan["envelope"]["v_cruise"])
     gdir = ctx.dir / "stl"
@@ -58,7 +59,7 @@ def run(ctx):
     case = ctx.dir / "case"
     base_args = dict(stl=stls, case=str(case), V=V, nu=1.5e-5, sref=g["ref"]["S"], cref=g["ref"]["c"],
                      cofr=[cg[0], 0.0, cg[2]], half=True, model=cfg.get("model", "kOmegaSST"),
-                     surf_level=list(cfg.get("surf_level", [5, 6])), base=cfg.get("base", 0.2), up=3.0, down=5.0, side=2.5,
+                     surf_level=list(cfg.get("surf_level_full", cfg.get("surf_level", [5, 6])) if full else cfg.get("surf_level", [5, 6])), base=cfg.get("base", 0.2), up=3.0, down=5.0, side=2.5,
                      layers=cfg.get("layers", 3), first_layer=0.0, expansion=1.25, tu=0.001, visc_ratio=10.0,
                      iters=int(cfg.get("iters", 400)), np=int(cfg.get("np", os.cpu_count() or 2)), keep=False,
                      second_order_turb=False, avg=int(cfg.get("avg", 50)), mesh_only=False)
@@ -99,9 +100,9 @@ def run(ctx):
         ctx.gate(f"CFD alpha {p['alpha']}: converged (force oscillation < 0.5 %)", bool(p["converged"]), True, "bool", "WARN",
                  note=f"{p['cells']} cells, mesh_ok={p['mesh_ok']}")
         if abs(ref_cl) > 0.05:
-            ctx.gate(f"CFD alpha {p['alpha']}: |CL_cfd/CL_vlm - 1| (low-order lift check)", abs(p["CL"] / ref_cl - 1), 0.10, "<=", "WARN",
+            ctx.gate(f"CFD alpha {p['alpha']}: abs(CL_cfd/CL_vlm - 1) (low-order lift check)", abs(p["CL"] / ref_cl - 1), 0.10, "<=", "WARN",
                      note=f"CFD {p['CL']:.3f} vs VLM {ref_cl:.3f} (fully turbulent RANS loses ~0.06 CL vs free transition)")
-        ctx.gate(f"CFD alpha {p['alpha']}: |dCm| vs VLM", abs(p["Cm"] - ref_cm), 0.03, "<=", "WARN",
+        ctx.gate(f"CFD alpha {p['alpha']}: abs(Cm_cfd - Cm_vlm)", abs(p["Cm"] - ref_cm), 0.03, "<=", "WARN",
                  note=f"CFD {p['Cm']:.3f} vs VLM {ref_cm:.3f}")
     # figure
     plt = style()

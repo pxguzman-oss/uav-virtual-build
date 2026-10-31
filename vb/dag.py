@@ -79,7 +79,8 @@ class Runner:
         if st["name"] == "cfd":
             # CFD case depends only on the external shape + moment reference: shared by variants whose
             # analysed geometry is identical (e.g. clean wing for base and VTOL)
-            cfdk = (self.plan.get("analysis", {}).get("cfd", {}) or {}).get("kind", "wing")
+            cfg = self.plan.get("analysis", {}).get("cfd", {}) or {}
+            cfdk = cfg.get("kind_full", cfg.get("kind", "wing")) if self.fidelity == "full" else cfg.get("kind", "wing")
             ls = self.plan["airframe"]["lifting_surfaces"]
             inputs["geom"] = [P.main_wing(self.plan)] if cfdk == "wing" else [ls, self.plan["airframe"].get("fuselage")]
             m = read_result(self.run_dir / "mass") or {}

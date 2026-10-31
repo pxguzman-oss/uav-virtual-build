@@ -70,7 +70,9 @@ def build(plan, render_title=None):
     surfaces = [_surface(ls, plan) for ls in af["lifting_surfaces"]]
     w = P.main_wing(plan)
     mg = P.mac_geometry(w)
-    g = dict(name=P.slug(plan["meta"]["name"]), units=dict(length="mm", mass="g"),
+    var = plan["meta"].get("variant", "base")
+    g = dict(name=P.slug(plan["meta"]["name"]), title=plan["meta"]["name"] + ("" if var == "base" else f" ({var})"),
+             units=dict(length="mm", mass="g"),
              options=dict(vtol=False, calibrate_masses=False), materials=mats,
              groups={k: dict(color=v) for k, v in COLORS.items()})
     cg_t = P.val(plan.get("analysis", {}).get("cg_target_x"))

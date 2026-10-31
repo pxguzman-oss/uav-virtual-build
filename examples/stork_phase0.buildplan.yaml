@@ -240,7 +240,8 @@ analysis:
   mass_model: geometry
   static_margin_range: [0.05, 0.20]
   aero: {speeds: [10, 14, 20], excrescence_factor: 1.10, prop_parking: aligned}
-  cfd: {kind: wing, alphas_standard: [4], alphas_full: [0, 4, 8], surf_level: [5, 6], iters: 400}
+  cfd: {kind: wingbody, kind_full: wingbodytail, alphas_standard: [4], alphas_full: [0, 4, 8],
+        surf_level: [5, 6], surf_level_full: [6, 7], iters: 400}
   sitl: {survey_alt: 60, l1_periods_standard: [10, 15], l1_periods_full: [10, 13, 15, 18, 22],
          launch_accel: 25, launch_duration: 0.45}
 
