@@ -112,10 +112,23 @@ class LiftingSurface:
 
 def _surfaces(plan: dict) -> dict[str, LiftingSurface]:
     af = plan["airframe"]
-    w = af["wing"]
-    fus_half = 0.5 * max(st[1] for st in af["fuselage"]["stations"])
-    half = 0.5 * w["span"]
+    fus_half = 0.5 * max(st[1] for st in af["fuselage"]["stations"]) if af.get("fuselage") else 0.0
     surf = {}
+    if af.get("surfaces"):          # generic list (vbuild adapter): wing / htail / v_tail / fin / canard
+        for d in af["surfaces"]:
+            kind = d.get("kind", "wing")
+            sides = ((+1, "R"), (-1, "L")) if d.get("symmetric", True) else ((+1, None),)
+            for side, tag in sides:
+                nm = f"{d['name']}_{tag}" if tag else d["name"]
+                s0 = d.get("s0", 0.5 * fus_half if kind == "wing" else 5)
+                kw = dict(sweep_le_deg=d["sweep_le_deg"]) if d.get("sweep_le_deg") is not None else \
+                    dict(sweep_qc_deg=d.get("sweep_quarter_chord_deg", 0))
+                surf[nm] = LiftingSurface(d["airfoil"], d["root_chord"], d["tip_chord"], d["panel_span"],
+                                          d["root_le"], dihedral_deg=d.get("dihedral_deg", 0),
+                                          twist_tip_deg=d.get("twist_tip_deg", 0), side=side, s0=s0, **kw)
+        return surf
+    w = af["wing"]
+    half = 0.5 * w["span"]
     for side, tag in ((+1, "R"), (-1, "L")):
         surf[f"wing_{tag}"] = LiftingSurface(
             w["airfoil"], w["root_chord"], w["tip_chord"], half, [0, 0, w["z_root"]],
@@ -155,20 +168,31 @@ def build_parts(plan: dict) -> tuple[list[Part], dict]:
     groups = plan.get("groups", {})
     col = lambda g: groups.get(g, {}).get("color", [0.6, 0.6, 0.6])
     parts: list[Part] = []
-    if not (af.get("wing") and af.get("fuselage") and af.get("vtail")):   # pure-import plan: no parametric airframe
+    generic = bool(af.get("surfaces"))
+    if not generic and not (af.get("wing") and af.get("fuselage") and af.get("vtail")):   # pure-import plan
         return _non_structure(plan, {}, parts, col), {"surfaces": {}}
     surf = _surfaces(plan)
+    pmass = plan.get("printed_mass_g", {})      # per-part mass targets (g): geometry only distributes them
 
     # ---- printed OML structure
-    pr = af["fuselage"]["printed"]
-    parts.append(Part("fuselage", _fuselage(plan), "printed", "structure", "shell", None, pr["material"],
-                      pr["wall_mm"], pr.get("infill", 0.0), True, color=col("printed"), label="Fuselage"))
-    for key in ("wing_L", "wing_R", "vtail_L", "vtail_R"):
-        src = af["wing"] if key.startswith("wing") else af["vtail"]
-        nsec = src.get("sections_per_side", 6)
-        pr = src["printed"]
-        parts.append(Part(key, surf[key].mesh(nsec), "printed", "structure", "shell", None, pr["material"],
-                          pr["wall_mm"], pr.get("infill", 0.0), True, color=col("printed"), label=key.replace("_", " ")))
+    if af.get("fuselage"):
+        pr = af["fuselage"]["printed"]
+        parts.append(Part("fuselage", _fuselage(plan), "printed", "structure", "shell", pmass.get("fuselage"), pr["material"],
+                          pr["wall_mm"], pr.get("infill", 0.0), True, color=col("printed"), label="Fuselage"))
+    if generic:
+        for d in af["surfaces"]:
+            pr = d["printed"]
+            for key in [k for k in surf if k == d["name"] or k.startswith(d["name"] + "_")]:
+                parts.append(Part(key, surf[key].mesh(d.get("sections_per_side", 6)), "printed", "structure", "shell",
+                                  pmass.get(key), pr["material"], pr["wall_mm"], pr.get("infill", 0.0), True,
+                                  color=col("printed"), label=key.replace("_", " ")))
+    else:
+        for key in ("wing_L", "wing_R", "vtail_L", "vtail_R"):
+            src = af["wing"] if key.startswith("wing") else af["vtail"]
+            nsec = src.get("sections_per_side", 6)
+            pr = src["printed"]
+            parts.append(Part(key, surf[key].mesh(nsec), "printed", "structure", "shell", pmass.get(key), pr["material"],
+                              pr["wall_mm"], pr.get("infill", 0.0), True, color=col("printed"), label=key.replace("_", " ")))
     parts = _non_structure(plan, surf, parts, col)
     info = {"surfaces": {k: dict(root_chord=s.cr, tip_chord=s.ct, span=s.b, tan_le=s.tan_le) for k, s in surf.items()}}
     return parts, info
@@ -178,16 +202,23 @@ def _non_structure(plan, surf, parts, col):
     af = plan.get("airframe", {})
     # ---- carbon tubes
     for t in plan.get("tubes", []):
-        if "attach" in t:   # placed along a lifting surface: s range + chord fraction
+        if "p0" in t:       # explicit end points (mm)
+            p0, p1 = np.asarray(t["p0"], float), np.asarray(t["p1"], float)
+            center, axis, length = 0.5 * (p0 + p1), p1 - p0, float(np.linalg.norm(p1 - p0))
+        elif "attach" in t:   # placed along a lifting surface: s range + chord fraction
             ls = surf[t["attach"]]
             p0 = ls.camber_point(t["s0"], t["chord_frac"])
             p1 = ls.camber_point(t["s1"], t["chord_frac"])
             center, axis, length = 0.5 * (p0 + p1), p1 - p0, float(np.linalg.norm(p1 - p0))
         else:
             center, axis, length = np.asarray(t["center"], float), np.asarray(t["axis"], float), t["length"]
-        m = G.tube(t["od"], t["wall"], length, center, axis, sections=32)
-        parts.append(Part(t["name"], m, "carbon", "tube", "solid", t.get("mass"), t.get("material", "cfrp_tube"),
-                          color=col("carbon"), label=t["name"], extra=dict(od=t["od"], wall=t["wall"], length=length)))
+        if t.get("shape") == "square":
+            m = G.square_tube(t["od"], t["wall"], length, center, axis)
+        else:
+            m = G.tube(t["od"], t["wall"], length, center, axis, sections=32)
+        parts.append(Part(t["name"], m, t.get("group", "carbon"), "tube", "solid", t.get("mass"), t.get("material", "cfrp_tube"),
+                          in_oml=bool(t.get("in_oml", False)), color=col(t.get("group", "carbon")), label=t.get("label", t["name"]),
+                          extra=dict(od=t["od"], wall=t["wall"], length=length)))
 
     # ---- components
     for c in plan.get("components", []):
@@ -214,6 +245,11 @@ def _non_structure(plan, surf, parts, col):
         disk = G.cylinder(p["diameter"], 2.0, [p["x"], 0, p["z"]], [1, 0, 0], sections=72)
         parts.append(Part("prop_disk", disk, "propulsion", "prop", "solid", p.get("mass", 0.0), color=[0.3, 0.3, 0.3],
                           label="10x6 pusher", in_oml=False))
+
+    for i, p in enumerate(plan.get("props", [])):      # generic rotating discs (vbuild adapter)
+        disk = G.cylinder(p["diameter"], 2.0, p["center"], p["axis"], sections=72)
+        parts.append(Part(p.get("name", f"prop_{i}"), disk, "propulsion", "prop", "solid", 0.0, color=[0.3, 0.3, 0.3],
+                          label=p.get("label"), in_oml=False))
 
     # ---- VTOL pack
     if plan.get("options", {}).get("vtol"):

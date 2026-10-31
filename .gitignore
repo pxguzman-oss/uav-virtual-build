@@ -1,0 +1,7 @@
+out/
+__pycache__/
+*.pyc
+tools/bin/
+tools/foam_sha1_shim/*.so
+third_party/
+setup/paths.env

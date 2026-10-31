@@ -65,6 +65,20 @@ $defs:
                       description: "override of EI-proportional load share"}
       source: {type: string}
     additionalProperties: false
+  printed_skin:
+    type: object
+    description: "printed shell: material key, wall thickness [m], perimeters, infill fraction of the enclosed volume"
+    properties:
+      material: {type: string}
+      thickness: {type: number}
+      walls: {type: integer}
+      infill: {type: number, minimum: 0, maximum: 1, default: 0.0}
+    additionalProperties: false
+  box:
+    type: object
+    required: [center, size]
+    properties: {center: {$ref: "#/$defs/vec3"}, size: {$ref: "#/$defs/vec3"}}
+    additionalProperties: false
   lifting_surface:
     type: object
     required: [name, span, root_chord, tip_chord, airfoil]
@@ -77,6 +91,8 @@ $defs:
       root_chord: {type: number}
       tip_chord: {type: number}
       sweep_le_deg: {type: number, default: 0}
+      sweep_c4_deg: {type: number, description: "quarter-chord sweep (alternative to sweep_le_deg)"}
+      sections_per_side: {type: integer, default: 8, description: "geometry loft sections per panel"}
       dihedral_deg: {type: number, default: 0}
       twist_tip_deg: {type: number, default: 0}
       incidence_deg: {type: number, default: 0}
@@ -85,8 +101,7 @@ $defs:
       airfoil: {type: string, description: "name or path to .dat (Selig format)"}
       thickness_ratio: {type: number}
       cl_max: {$ref: "#/$defs/sourced_number"}
-      skin: {type: object, properties: {material: {type: string}, thickness: {type: number}, walls: {type: integer}},
-             additionalProperties: false}
+      skin: {$ref: "#/$defs/printed_skin"}
       spars: {type: array, items: {$ref: "#/$defs/spar_segment"}}
       control_surfaces:
         type: array
@@ -104,6 +119,8 @@ $defs:
             horn_arm: {type: number, description: "control-horn arm [m]"}
             servo_arm: {type: number, description: "servo-horn arm [m]"}
             servo: {type: string, description: "component name of the servo"}
+            hinge_x_c: {type: number, description: "hinge line x/c (default 1 - chord_fraction)"}
+            servo_rate_deg_s: {type: number, default: 300}
           additionalProperties: false
     additionalProperties: false
 
@@ -141,6 +158,14 @@ properties:
           x_nose: {type: number}
           cad: {type: string, description: "STEP/STL path of the printed fuselage (for fit/clash)"}
           payload_bay: {type: object, properties: {min: {$ref: "#/$defs/vec3"}, max: {$ref: "#/$defs/vec3"}}}
+          stations:
+            type: array
+            description: "outer mould line stations [x, width, height, z_centre] in m (superellipse sections)"
+            items: {type: array, items: {type: number}, minItems: 4, maxItems: 4}
+          exponent: {type: number, default: 3.0, description: "superellipse squareness (2 = ellipse)"}
+          skin: {$ref: "#/$defs/printed_skin"}
+          bays: {type: object, description: "internal compartments name -> {center, size} [m] (fit check)",
+                 additionalProperties: {$ref: "#/$defs/box"}}
       booms:
         type: array
         items:
@@ -162,6 +187,13 @@ properties:
           method: {enum: [hand, bungee, catapult, vtol, runway]},
           launch_speed: {type: number}, launch_load_factor: {type: number}}}
       cad_files: {type: array, items: {type: string}}
+      cad_import:
+        type: object
+        description: >
+          Real STL/STEP parts (see README 'Adding real STL parts'). Same keys as the geometry
+          importer's assembly YAML: folder, replace_structure, oml_method, voxel_pitch, defaults{}, parts[], ignore[].
+          Paths are relative to the plan file.
+        additionalProperties: true
 
   materials:
     type: object
@@ -341,6 +373,30 @@ properties:
             additionalProperties: true
         reserve_fraction: {type: number}
       additionalProperties: true
+
+  analysis:
+    type: object
+    description: "Pipeline settings and design targets (all optional; defaults documented in README)."
+    properties:
+      cg_target_x: {$ref: "#/$defs/sourced_number", description: "design CG x [m] from root LE"}
+      cg_tolerance_mac: {type: number, default: 0.03}
+      auw_target: {$ref: "#/$defs/sourced_number", description: "planned AUW [kg] (gate +-5 %)"}
+      mass_model: {enum: [geometry, plan], default: geometry,
+                   description: "geometry: meshes (printed shells scaled to the plan masses) give CG/inertia; plan: point/box masses only"}
+      static_margin_range: {type: array, items: {type: number}, default: [0.05, 0.15]}
+      aero: {type: object, additionalProperties: true,
+             description: "speeds [m/s], excrescence_factor, prop_parking (aligned|crosswise_worst), z_ref"}
+      cfd: {type: object, additionalProperties: true,
+            description: "kind (wing|wingbody|wingbodytail), alphas_standard, alphas_full, surf_level, iters"}
+      sitl: {type: object, additionalProperties: true,
+             description: "home, survey_alt, course, l1_periods_standard, l1_periods_full, launch_accel, launch_duration"}
+      vtol_auw_cases_kg: {type: array, items: {type: number}}
+    additionalProperties: true
+
+  calibration:
+    type: object
+    description: "measured overrides applied by --calibrated (see README calibration loop)"
+    additionalProperties: true
 
   gates:
     type: object

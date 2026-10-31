@@ -92,8 +92,11 @@ def load_params(path, vtol=False):
 def wing_section_y(g):
     """Spanwise stations (per side) incl. control-surface breaks."""
     c = g["controls"]
-    ys = sorted({0.0, c["flap"]["y0"], c["flap"]["y1"], c["aileron"]["y0"], c["aileron"]["y1"], g["wing"]["span"] / 2})
-    return ys
+    ys = {0.0, g["wing"]["span"] / 2}
+    for k in ("flap", "aileron"):
+        if k in c:
+            ys |= {c[k]["y0"], c[k]["y1"]}
+    return sorted(ys)
 
 
 def wing_station(g, y):
@@ -229,6 +232,8 @@ def write_avl(g, path, afdir):
             L += ["SECTION", f"{xle:.5f} {side * y:.5f} {zle:.5f} {ch:.5f} {tw:.3f} {ns} 0.0", "AFILE",
                   os.path.join(afdir, f"{g['wing']['airfoil']}.dat")]
             for cname in ("flap", "aileron"):
+                if cname not in ctl:
+                    continue
                 cc = ctl[cname]
                 if cc["y0"] - 1e-9 <= y <= cc["y1"] + 1e-9:
                     L += ctrl_lines(f"{cname}_{tag}", cc["hinge_xc"])
@@ -493,6 +498,8 @@ def make_dataset(g, mass, res, args):
                 "rv_L": ("ruddervator_left", "ruddervator"), "rv_R": ("ruddervator_right", "ruddervator")}
     surfaces = []
     for k, (nm, kind) in name_map.items():
+        if kind not in g["controls"]:
+            continue
         d = ctrl.get(k, {})
         # CD_abs: profile-drag increment of a plain flap ~ use AVL CDff slope magnitude + viscous estimate
         # viscous: dCD/d|delta| ~ 0.9 * (Sflap_wet/S) * ... use NeuralFoil-geomflap-like estimate 0.04*Sflapped/S per rad
