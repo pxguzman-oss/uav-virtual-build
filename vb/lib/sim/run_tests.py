@@ -261,8 +261,12 @@ def t_failsafe(a, kind):
         params["FS_GCS_ENABL"] = 1
     if kind == "batt":
         bargs = ["--soc", str(a.soc)]
-        # time-box: raise the low-voltage threshold so the (sag-compensated) voltage trips it within minutes
-        params["BATT_LOW_VOLT"] = a.batt_low_volt
+        if getattr(a, "batt_low_mah", None):
+            # time-box via the mAh failsafe (the one derived.param relies on for Li-ion): trips after ~150 mAh used
+            params["BATT_LOW_MAH"] = a.batt_low_mah
+        else:
+            # legacy: raise the low-voltage threshold so the (sag-compensated) voltage trips it within minutes
+            params["BATT_LOW_VOLT"] = a.batt_low_volt
     s = new_run(name, params=params, bridge_args=bargs)
     s.start()
     meta.update(fs=kind)

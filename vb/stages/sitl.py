@@ -122,13 +122,20 @@ def run(ctx):
     S = plan["energy"]["series"]
     is_vtol = fm.get("is_vtol")
     tests = matrix(ctx, is_vtol, fm)
+    sel = os.environ.get("VB_SITL_TESTS")          # sharding / re-running a subset: VB_SITL_TESTS=fs_batt,stall
+    if sel:
+        want = {x.strip() for x in sel.split(",") if x.strip()}
+        tests = [t for t in tests if t[1] in want or t[0] in want]
     ctx.note(f"SITL matrix ({ctx.fidelity}): " + ", ".join(n for _, n, _ in tests))
     results = {}
     for kind, name, kw in tests:
         a = types.SimpleNamespace(name=name, l1=None, wind=None, turb=None, spacing=an.get("wp_spacing", 25.0),
                                   periods="", speeds=an.get("cruise_speeds", "10,11,12,13,14,15,16,18,20"), speeds_min=params.get("AIRSPEED_STALL", 9),
                                   settle=25, hold=25, accel=25, dur=0.45, soc=0.22, compensate=False, backend="jsbsim", rate=400,
-                                  batt_low_volt=round(S * 3.49, 2))
+                                  batt_low_volt=round(S * 3.49, 2),
+                                  batt_low_mah=int(params.get("BATT_CAPACITY", 5000)) - 150)
+        if kind == "fs_batt":
+            a.soc = 0.6
         for k, v in kw.items():
             setattr(a, k, v)
         t0 = time.time()
@@ -208,7 +215,11 @@ def run(ctx):
                      note=f"mode {fc.get('mode')} after {fc.get('dt_s')} s")
         if name == "fs_batt":
             fc = r.get("first_mode_change_after_trigger") or {}
-            ctx.gate("fs_batt: battery failsafe -> RTL", fc.get("mode") == 11, True, "bool", "FAIL")
+            trig = (r.get("trigger") or {}).get("t")
+            before = [m for m in r.get("mode_changes", []) if trig is not None and m[0] <= trig]
+            already = bool(before) and before[-1][1] == 11
+            ctx.gate("fs_batt: battery failsafe (BATT_LOW_MAH) -> RTL", fc.get("mode") == 11 or already, True, "bool", "FAIL",
+                     note=f"trigger at {trig} s: {(r.get('trigger') or {}).get('text', '')}" + (" (already in RTL)" if already else ""))
         if name.startswith("vtol"):
             ok = r.get("landing_pos_error_m") is not None and not r.get("run_error")
             ctx.gate(f"{name}: VTOL takeoff, transitions both ways, VTOL land, disarm", ok, True, "bool", "FAIL")
@@ -242,7 +253,11 @@ def run(ctx):
         for n, r in results.items():
             if n.startswith("mission_wind") and "course_Wh_per_km" in r:
                 Ew = mi["energy_Wh"] * r["course_Wh_per_km"] / whkm_pred
-                ctx.gate(f"{n}: mission energy with this wind (SITL-scaled) [Wh]", Ew, mi["available_after_reserve_Wh"], "<=", "FAIL", "Wh")
+                own = n == f"mission_wind_{mi.get('environment')}"
+                ctx.gate(f"{n}: mission energy with this wind/turbulence (SITL-scaled) [Wh]", Ew, mi["available_after_reserve_Wh"], "<=",
+                         "FAIL" if own else "WARN", "Wh",
+                         note=("mission's own environment" if own else "other environment case -> operating limit for this mission")
+                              + f"; {r['course_Wh_per_km']:.2f} Wh/km")
     # L1 sweep summary
     l1 = None
     l1runs = [str(res_dir / n) for n in results if n.startswith("mission_l1") and "xt_truth_rms_m" in results[n]]

@@ -96,6 +96,8 @@ class Runner:
                 r = read_result(self.run_dir / d)
                 ups[d] = r.get("data_hash") if r and r.get("status") == "ok" else "absent"
             inputs["upstream"] = ups
+            if st["name"] == "sitl" and os.environ.get("VB_SITL_TESTS"):
+                inputs["sitl_subset"] = os.environ["VB_SITL_TESTS"]
         return P.sha(inputs, 20)
 
     # ------------------------------------------------------------------ run one stage
