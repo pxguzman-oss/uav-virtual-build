@@ -37,8 +37,32 @@ def clean(o):
 
 
 def worst(statuses):
-    s = [x for x in statuses if x]
-    return max(s, key=lambda x: STATUS_ORDER.get(x, 0)) if s else "PASS"
+    """Worst gate status. A stage with no gates (or INFO gates only) is INFO, never a vacuous PASS (review M6)."""
+    s = [x for x in statuses if x and x != "INFO"]
+    return max(s, key=lambda x: STATUS_ORDER.get(x, 0)) if s else "INFO"
+
+
+MARGINAL = 0.05   # a PASS within 5 % of its limit is flagged "marginal" in the report (review M4)
+
+
+def margin_of(value, limit, kind):
+    """Relative distance of a passing value to its limit (>= 0 passes). None when not numeric."""
+    try:
+        if isinstance(value, bool) or value is None:
+            return None
+        v = float(value)
+        if kind == ">=":
+            L = float(limit)
+            return (v - L) / max(abs(L), 1e-9)
+        if kind == "<=":
+            L = float(limit)
+            return (L - v) / max(abs(L), 1e-9)
+        if kind == "range":
+            lo, hi = float(limit[0]), float(limit[1])
+            return min(v - lo, hi - v) / max(abs(hi - lo), 1e-9)
+    except (TypeError, ValueError, IndexError):
+        return None
+    return None
 
 
 class Ctx:
@@ -98,14 +122,25 @@ class Ctx:
             st = "PASS" if limit[0] <= value <= limit[1] else severity
         elif kind == "bool":
             st = "PASS" if value else severity
+        elif kind == "error":
+            st = "ERROR"
         else:
             st = "INFO"
         g = dict(stage=stage or self.stage, check=check, value=value, limit=limit, kind=kind, status=st,
                  unit=unit, note=note, drivers=drivers or [])
+        mg = margin_of(value, limit, kind)
+        if mg is not None:
+            g["margin"] = mg
+            if st == "PASS" and mg < MARGINAL:
+                g["marginal"] = True
         self.gates.append(clean(g))
         v = f"{value:.4g}" if isinstance(value, (int, float)) and not isinstance(value, bool) else str(value)
         print(f"   [{st:4s}] {check}: {v} {kind} {limit} {unit} {note}", flush=True)
         return st == "PASS"
+
+    def missing(self, check, note=""):
+        """Mandatory evidence that is absent (run not flown, metric not logged): an ERROR gate, never silence."""
+        return self.gate(check, None, None, "error", "ERROR", note=(note + " (missing evidence)").strip())
 
     def add_file(self, path, caption=None, kind=None):
         p = Path(path)
@@ -124,7 +159,7 @@ def run_stage(spec_path):
     ctx = Ctx(spec)
     mod = importlib.import_module(f"vb.stages.{spec['stage']}")
     res = dict(stage=spec["stage"], status="ok", key=spec.get("key"), variant=ctx.variant,
-               fidelity=ctx.fidelity, plan=ctx.plan["meta"]["name"])
+               fidelity=ctx.fidelity, plan=ctx.plan["meta"]["name"], provenance=spec.get("provenance"))
     try:
         out = mod.run(ctx) or {}
         if out.get("skipped"):

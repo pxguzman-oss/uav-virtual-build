@@ -154,6 +154,7 @@ def run(ctx):
     S = plan["energy"]["series"]
     is_vtol = fm.get("is_vtol")
     tests = matrix(ctx, is_vtol, fm)
+    planned = [(k, n) for k, n, _ in tests]
     sel = os.environ.get("VB_SITL_TESTS")          # sharding / re-running a subset: VB_SITL_TESTS=fs_batt,stall
     if sel:
         want = {x.strip() for x in sel.split(",") if x.strip()}
@@ -198,6 +199,22 @@ def run(ctx):
         (ctx.dir / "sitl_results.json").write_text(json.dumps(results, indent=1, default=str))
         for f in sorted(rd.glob("*.png")) if rd.exists() else []:
             ctx.add_file(f, f"SITL {name}: {f.stem}", "figure")
+
+    # ---- mandatory evidence: every planned run flown, every required metric logged (review M6) ----------
+    REQ = {"mission": ["xt_truth_rms_m", "course_Wh_per_km", "min_airspeed_inflight", "max_cas", "max_nz"],
+           "launch": ["min_cas_after_release", "height_at_10s_m", "max_cas"], "stall": ["stalls", "V_stall_1g_mean"],
+           "fs_rc": ["first_mode_change_after_trigger"], "fs_gcs": ["first_mode_change_after_trigger"], "fs_batt": ["trigger"],
+           "vtol": ["landing_pos_error_m", "hover_power_W", "ap_QTUN_ThO_median"], "smoke": ["mode_changes", "max_cas"],
+           "cruise": ["table"]}
+    for kind, name in planned:
+        if name not in results:
+            ctx.missing(f"{name}: planned {ctx.fidelity}-fidelity SITL run not flown",
+                        note=f"filtered out by VB_SITL_TESTS={sel}" if sel else "no result")
+            continue
+        r = results[name]
+        for k in REQ.get(kind, []):
+            if r.get(k) in (None, [], {}):
+                ctx.missing(f"{name}: required metric '{k}' not produced", note=str(r.get("run_error") or r.get("analyze_error") or "")[:120])
 
     # ---- gates ---------------------------------------------------------------------------------------
     env_ = plan["envelope"]

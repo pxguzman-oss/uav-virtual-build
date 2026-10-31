@@ -246,39 +246,85 @@ def run(ctx):
     def stage_ok(s):
         return R.get(s) and R[s].get("status") == "ok"
 
+    # ---- provenance: every result must come from the current code, plan and fidelity (review M5) -------
+    expf = rd / "expected_provenance.json"
+    exp = json.loads(expf.read_text()) if expf.exists() else {}
+    prov_rows, stale = [], []
+    for s in NAMES[:-1]:
+        r = R.get(s)
+        if r is None or r.get("status") == "blocked":
+            continue
+        e = (exp.get("stages") or {}).get(s)
+        pv = r.get("provenance") or {}
+        why = []
+        if not e:
+            why.append("no expected key (report run outside run.py?)")
+        elif r.get("key") != e.get("key"):
+            if pv.get("code_hash") and pv["code_hash"] != e.get("code_hash"):
+                why.append("different code")
+            if pv.get("plan_subset_hash") and pv["plan_subset_hash"] != e.get("plan_subset_hash"):
+                why.append("different plan inputs")
+            if e.get("fidelity_matters") and r.get("fidelity") != ctx.fidelity:
+                why.append(f"fidelity {r.get('fidelity')} != {ctx.fidelity}")
+            for d, h in (pv.get("upstream") or {}).items():
+                cur = R.get(d)
+                curh = cur.get("data_hash") if cur and cur.get("status") == "ok" else "absent"
+                if h != curh:
+                    why.append(f"upstream {d} changed")
+            if not why:
+                why.append("cache key differs (code, plan, fidelity or upstream)")
+        if why:
+            stale.append(f"{s}: {', '.join(why)}")
+        prov_rows.append([s, r.get("fidelity", "?"), pv.get("git_hash", "?") + (" (dirty)" if pv.get("git_dirty") else ""),
+                          pv.get("created", "?"), (r.get("key") or "")[:10], "OK" if not why else "STALE: " + ", ".join(why)])
+
     # ---- verdict -----------------------------------------------------------------------------
-    rows, n_fail, n_warn, problems = [], 0, 0, []
+    rows, n_fail, n_warn, n_err, problems = [], 0, 0, 0, []
     for s in NAMES[:-1]:
         r = R.get(s)
         if r is None:
-            rows.append([f"[{TITLES[s]}](#{s})", "NOTRUN", 0, 0, "stage did not run"])
-            problems.append(f"{s} not run")
+            rows.append([f"[{TITLES[s]}](#{s})", "NOT RUN", 0, 0, "stage did not run"])
+            problems.append(f"{s} NOT RUN")
             continue
         g = r.get("gates", [])
         f = [x for x in g if x["status"] == "FAIL"]
         w = [x for x in g if x["status"] == "WARN"]
-        n_fail += len(f); n_warn += len(w)
+        er = [x for x in g if x["status"] == "ERROR"]
+        n_fail += len(f); n_warn += len(w); n_err += len(er)
         v = r.get("verdict", "?")
+        if v == "PASS" and not [x for x in g if x["status"] != "INFO"]:
+            v = "INFO"                       # no real gates: not a PASS (review M6)
         if r.get("status") in ("error", "blocked"):
             v = "ERROR" if r["status"] == "error" else "BLOCKED"
             problems.append(f"{s} {r['status']}: {r.get('error', '')[:100]}")
-        top = (f or w or [None])[0]
+        if er:
+            problems.append(f"{s}: {len(er)} missing-evidence ERROR gate(s)")
+        top = (f or er or w or [None])[0]
         topt = f"{top['check']} ({fmt(top['value'])})" if top else (r.get("error", "")[:120] if r.get("status") != "ok" else "-")
         if r.get("status") == "skipped":
-            v, topt = "SKIP", (r.get("summary") or {}).get("skipped", "skipped")
+            v, topt = "NOT RUN", "skipped: " + str((r.get("summary") or {}).get("skipped", "skipped"))
+            problems.append(f"{s} NOT RUN ({(r.get('summary') or {}).get('skipped', 'skipped')})")
         rows.append([f"[{TITLES[s]}](#{s})", v, len(f), len(w), topt])
-    if n_fail or any(r[1] in ("ERROR", "BLOCKED") for r in rows):
+    reasons = []
+    if stale:
+        overall = "INCOMPLETE"
+        reasons.append("stage results from different code/plan/fidelity: " + "; ".join(stale[:6]))
+    elif n_fail or any(r[1] in ("ERROR", "BLOCKED") for r in rows):
         overall = "NO-GO"
-    elif problems:
+    elif ctx.fidelity == "quick":
+        overall = "INCOMPLETE"
+        reasons.append("quick fidelity: not valid for a build/fly decision (no CFD, calm-air smoke flight only)")
+    elif problems or n_err:
         overall = "INCOMPLETE"
     elif n_warn:
         overall = "CONDITIONAL GO"
     else:
         overall = "GO"
+    verdict_text = overall + (" - quick fidelity" if overall == "INCOMPLETE" and ctx.fidelity == "quick" and not stale else "")
 
     # ---- soft inputs ranked by the gates they drive ------------------------------------------
     soft = (R.get("ingest") or {}).get("data", {}).get("soft_inputs", [])
-    bad_gates = [(s, g) for s in R if R[s] for g in R[s].get("gates", []) if g["status"] in ("FAIL", "WARN")]
+    bad_gates = [(s, g) for s in R if R[s] for g in R[s].get("gates", []) if g["status"] in ("FAIL", "WARN", "ERROR")]
 
     def toks(p):
         return [t for t in re.split(r"[/ ()*,]+", p.lower()) if len(t) > 2 and t not in ("components", "airframe", "lifting_surfaces")]
@@ -352,10 +398,11 @@ def run(ctx):
     n_warn += len(model_err)
     if model_err and overall == "GO":
         overall = "CONDITIONAL GO"
+        verdict_text = overall
     risks = []
     for s, g in bad_gates:
-        L = 4 if g["status"] == "FAIL" else 3
-        S = SEVERITY.get(s, 3) if g["status"] == "FAIL" else max(SEVERITY.get(s, 3) - 1, 2)
+        L = 4 if g["status"] in ("FAIL", "ERROR") else 3
+        S = SEVERITY.get(s, 3) if g["status"] in ("FAIL", "ERROR") else max(SEVERITY.get(s, 3) - 1, 2)
         risks.append(dict(ID=f"R{len(risks) + 1:02d}", stage=s, status_gate=g["status"], hazard=g["check"],
                           cause=(g.get("note") or "")[:200], effect=f"value {fmt(g['value'])} vs limit {fmt(g['limit'])} {g.get('unit', '')}".strip(),
                           L=L, S=S, score=L * S, mitigation=mitigation(g["check"]), verification=verification(s, g["check"]),
@@ -402,23 +449,25 @@ def run(ctx):
     D = Doc()
     title = f"Virtual build report - {plan['meta']['name']} ({ctx.variant})"
     D.h(1, title)
-    try:
-        ghash = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
-    except Exception:
-        ghash = "?"
+    from ..dag import git_info
+    gi = git_info()
+    ghash = gi["git_hash"] + (" (DIRTY working tree: " + ", ".join(gi["dirty_files"][:5]) + ")" if gi["git_dirty"] else " (clean)")
     vers = env.versions()
     D.table(["item", "value"], [
         ["plan", f"{ctx.plan_path.name} - {plan['meta']['name']} rev {plan['meta'].get('revision')} ({plan['meta'].get('phase', '')})"],
         ["variant / fidelity", f"{ctx.variant} / {ctx.fidelity}"],
         ["plan hash", (R.get("ingest") or {}).get("data", {}).get("plan_hash", "?")],
-        ["pipeline (git)", ghash or "?"],
+        ["pipeline (git) at report time", ghash or "?"],
         ["firmware (SITL)", vers.get("ardupilot", "?") + f" (plan: {plan.get('avionics', {}).get('autopilot', {}).get('firmware_version', '?')})"],
         ["date", time.strftime("%Y-%m-%d %H:%M")],
         ["run wall time", f"{last.get('total_wall_s', 0)/60:.1f} min (this invocation; cached stages count 0)"]])
-    D.p(f"VERDICT: {overall} - {n_fail} FAIL, {n_warn} WARN across {sum(1 for r in R.values() if r)} stages"
-        + (f"; problems: {'; '.join(problems)}" if problems else ""))
-    D.p("Rules: FAIL blocks GO; every WARN needs an owner and a mitigation in the risk register (owners are blank until "
-        "the team assigns them, hence CONDITIONAL GO); a stage that errored or did not run makes the result INCOMPLETE/NO-GO.")
+    D.p(f"VERDICT: {verdict_text} - {n_fail} FAIL, {n_warn} WARN, {n_err} ERROR (missing evidence) across {sum(1 for r in R.values() if r)} stages"
+        + (f"; problems: {'; '.join(problems)}" if problems else "") + (f"; {'; '.join(reasons)}" if reasons else ""))
+    D.p("Rules: results from different code/plan/fidelity -> INCOMPLETE; any FAIL, errored or blocked stage -> NO-GO; "
+        "quick fidelity, a stage that did not run (NOT RUN) or missing evidence (ERROR gate) -> INCOMPLETE; "
+        "WARNs only -> CONDITIONAL GO (each WARN needs an owner and a mitigation in the risk register); GO only when "
+        "every stage ran at standard/full fidelity with real gates and all PASS. A stage without gates is INFO, not PASS. "
+        "PASS (marginal) = within 5 % of its limit.")
     ad0 = (R.get("aero_lowfi") or {}).get("data") or {}
     lm0 = ad0.get("lift_model") or {}
     key_rows = []
@@ -431,12 +480,21 @@ def run(ctx):
         D.table(["quantity", "value", "basis"], key_rows)
     D.h(2, "GO / NO-GO by stage", "gonogo")
     D.table(["stage", "verdict", "FAIL", "WARN", "top issue"], rows, status_col=1)
+    D.h(3, "Provenance of every stage result")
+    D.p(f"Run fidelity {ctx.fidelity}; plan hash {exp.get('plan_hash', '?')}. A result is OK when its cache key equals the key the "
+        "current code, plan, fidelity and upstream results produce now.")
+    D.table(["stage", "fidelity", "git (when produced)", "produced", "key", "consistency"], prov_rows)
     fails = [(s, g) for s, g in bad_gates if g["status"] == "FAIL"]
     if fails:
         D.h(3, "Blocking items (FAIL) and suggested changes")
         D.table(["stage", "check", "value", "limit", "suggested change"],
                 [[s, g["check"], fmt(g["value"]), fmt(g["limit"]), mitigation(g["check"])] for s, g in fails])
 
+    marg = [(s, g) for s in R if R[s] for g in R[s].get("gates", []) if g.get("marginal")]
+    if marg:
+        D.h(3, "Marginal passes (within 5 % of the limit) - treat as open risks")
+        D.table(["stage", "check", "value", "limit", "margin"],
+                [[s, g["check"], fmt(g["value"]), fmt(g["limit"]), f"{100*g['margin']:.1f} %"] for s, g in marg])
     D.h(2, "Soft inputs (estimates) - measure these first", "soft")
     D.p(f"{len(soft)} soft inputs in the plan. Ranked by the number of non-PASS gates they drive (FAIL counts double), then by stated uncertainty.")
     D.table(["#", "plan path", "value", "source", "+-", "drives non-PASS gates", "measure"],
@@ -488,7 +546,7 @@ def run(ctx):
             D.table(["key figure", "value"], [[k, fmt(v)] for k, v in sm.items() if k != "timings_s"])
         if r.get("gates"):
             D.table(["status", "check", "value", "limit", "note"],
-                    [[g["status"], g["check"], fmt(g["value"]) + (f" {g['unit']}" if g.get("unit") and isinstance(g["value"], (int, float)) else ""),
+                    [[g["status"] + (" (marginal)" if g.get("marginal") else ""), g["check"], fmt(g["value"]) + (f" {g['unit']}" if g.get("unit") and isinstance(g["value"], (int, float)) else ""),
                       (g["kind"] + " " + fmt(g["limit"])) if g["kind"] not in ("bool", "info") else ("must be true" if g["kind"] == "bool" else "-"),
                       (g.get("note") or "").split(" | env: ")[0][:220]] for g in r["gates"]], status_col=0)
         if r.get("notes"):
@@ -549,7 +607,7 @@ def run(ctx):
             D.p("Full parameter file: derived.param (in this report folder); diff against the defaults: derived_vs_defaults.txt.")
 
     D.h(2, "Risk register", "risks")
-    D.p(f"{len(risks)} rows (one per WARN/FAIL), sorted by L x S. CSV: risk_register.csv. Owner/status columns are for the team.")
+    D.p(f"{len(risks)} rows (one per WARN/FAIL/ERROR), sorted by L x S. CSV: risk_register.csv. Owner/status columns are for the team.")
     D.table(["ID", "stage", "gate", "hazard", "L", "S", "score", "mitigation", "verification"],
             [[r["ID"], r["stage"], r["status_gate"], r["hazard"][:90], r["L"], r["S"], r["score"], r["mitigation"][:110], r["verification"][:60]]
              for r in risks], status_col=2)
@@ -611,8 +669,8 @@ def run(ctx):
                     ("derived.param", "ArduPilot parameters")):
         if (out / fn).exists():
             ctx.add_file(out / fn, cap, Path(fn).suffix.lstrip("."))
-    summ = dict(overall=overall, fails=n_fail, warns=n_warn, risks=len(risks), soft_inputs=len(soft),
+    summ = dict(overall=verdict_text, fails=n_fail, warns=n_warn, errors=n_err, stale=len(stale), risks=len(risks), soft_inputs=len(soft),
                 html_MB=round((out / "index.html").stat().st_size / 1e6, 2))
-    return dict(summary=summ, data=dict(overall=overall, fails=n_fail, warns=n_warn, stage_rows=rows, problems=problems,
+    return dict(summary=summ, data=dict(overall=verdict_text, fails=n_fail, warns=n_warn, errors=n_err, stale=stale, stage_rows=rows, problems=problems + reasons,
                                         top_fail=[f"{s}: {g['check']}" for s, g in fails][:10],
                                         top_warn=[f"{s}: {g['check']}" for s, g in bad_gates if g["status"] == "WARN"][:10]))

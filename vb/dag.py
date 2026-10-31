@@ -28,6 +28,17 @@ def code_hash(paths):
     return h.hexdigest()[:16]
 
 
+def git_info():
+    """Pipeline git hash + dirty flag (tracked changes or untracked, non-ignored files)."""
+    try:
+        h = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+        st = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain"], capture_output=True, text=True).stdout
+        dirty = [l[3:] for l in st.splitlines() if l.strip()]
+        return dict(git_hash=h or "?", git_dirty=bool(dirty), dirty_files=dirty[:20])
+    except Exception:
+        return dict(git_hash="?", git_dirty=None, dirty_files=[])
+
+
 def read_result(d):
     f = Path(d) / "result.json"
     if f.exists():
@@ -70,8 +81,41 @@ class Runner:
                 forced |= {f} | descendants(f)
         self.forced = forced
         self.log = []
+        self._ups = {}
+        self.git = git_info()
 
     # ------------------------------------------------------------------ keys
+    def static_inputs(self, st):
+        """Code hash + hash of the plan subset the stage depends on (no upstream data)."""
+        inputs = dict(stage=st["name"], code=code_hash(st["code"]),
+                      plan={k: P.get_ptr(self.plan, k) for k in st["keys"]} if st["keys"] != ["/"] else self.plan,
+                      fidelity=self.fidelity if st["fid"] else None)
+        if st["name"] == "cfd":
+            inputs.update(self._cfd_inputs())
+            inputs.pop("plan")
+        return inputs
+
+    def _cfd_inputs(self):
+        out = {}
+        cfg = self.plan.get("analysis", {}).get("cfd", {}) or {}
+        cfdk = cfg.get("kind_full", cfg.get("kind", "wing")) if self.fidelity == "full" else cfg.get("kind", "wing")
+        ls = self.plan["airframe"]["lifting_surfaces"]
+        out["geom"] = [P.main_wing(self.plan)] if cfdk == "wing" else [ls, self.plan["airframe"].get("fuselage")]
+        cg_t = P.val((self.plan.get("analysis") or {}).get("cg_target_x"))
+        if cg_t is None:
+            m = read_result(self.run_dir / "mass") or {}
+            cg = (m.get("data") or {}).get("cg_m")
+            cg_t = cg[0] if cg else None
+        out["moment_ref_x_mm"] = None if cg_t is None else round(cg_t * 1000)
+        out["alphas"] = cfg.get("alphas_full" if self.fidelity == "full" else "alphas_standard")
+        out["cfg"] = {k: v for k, v in cfg.items() if k not in ("alphas_standard", "alphas_full")}
+        return out
+
+    def provenance(self, st):
+        si = self.static_inputs(st)
+        return dict(code_hash=si["code"], plan_subset_hash=P.sha({k: v for k, v in si.items() if k != "code"}, 16),
+                    fidelity=self.fidelity, fidelity_matters=bool(st["fid"]))
+
     def key(self, st):
         inputs = dict(stage=st["name"], code=code_hash(st["code"]),
                       plan={k: P.get_ptr(self.plan, k) for k in st["keys"]} if st["keys"] != ["/"] else self.plan,
@@ -96,6 +140,7 @@ class Runner:
                 r = read_result(self.run_dir / d)
                 ups[d] = r.get("data_hash") if r and r.get("status") == "ok" else "absent"
             inputs["upstream"] = ups
+            self._ups[st["name"]] = ups
             if st["name"] == "sitl" and os.environ.get("VB_SITL_TESTS"):
                 inputs["sitl_subset"] = os.environ["VB_SITL_TESTS"]
         return P.sha(inputs, 20)
@@ -105,6 +150,8 @@ class Runner:
         name = st["name"]
         sdir = self.run_dir / name
         t0 = time.time()
+        if name == "report":
+            self.write_expected()     # keys every result must carry for a consistent report (computed NOW)
         # dependencies
         for d in st["deps"]:
             r = read_result(self.run_dir / d)
@@ -126,8 +173,11 @@ class Runner:
         if sdir.exists():
             shutil.rmtree(sdir)
         sdir.mkdir(parents=True)
+        prov = dict(self.provenance(st), upstream=self._ups.get(name, {}), **{k: v for k, v in self.git.items() if k != "dirty_files"},
+                    plan_hash=P.sha(self.plan, 16), sitl_subset=os.environ.get("VB_SITL_TESTS") if name == "sitl" else None,
+                    created=time.strftime("%Y-%m-%d %H:%M:%S"))
         spec = dict(stage=name, key=key, plan_path=str(self.plan_path), variant=self.variant, fidelity=self.fidelity,
-                    calibration=self.calibration,
+                    calibration=self.calibration, provenance=prov,
                     stage_dir=str(sdir), run_dir=str(self.run_dir), out_root=str(self.out_root))
         spec_f = sdir / "spec.json"
         spec_f.write_text(json.dumps(spec, indent=1))
@@ -188,6 +238,12 @@ class Runner:
         return rec
 
     # ------------------------------------------------------------------ run all
+    def write_expected(self):
+        """What a CONSISTENT set of stage results must carry (checked by the report stage, review M5/M6)."""
+        exp = dict(fidelity=self.fidelity, plan_hash=P.sha(self.plan, 16), git=self.git,
+                   stages={s["name"]: dict(self.provenance(s), key=self.key(s)) for s in STAGES if s["name"] != "report"})
+        (self.run_dir / "expected_provenance.json").write_text(json.dumps(exp, indent=1))
+
     def run(self):
         t0 = time.time()
         print(f"plan {self.plan_path.name} | variant {self.variant} | fidelity {self.fidelity} | out {self.run_dir}")
