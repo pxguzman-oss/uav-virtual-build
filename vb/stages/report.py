@@ -320,7 +320,10 @@ def run(ctx):
         overall = "CONDITIONAL GO"
     else:
         overall = "GO"
-    verdict_text = overall + (" - quick fidelity" if overall == "INCOMPLETE" and ctx.fidelity == "quick" and not stale else "")
+    verdict_text = overall
+    if ctx.fidelity == "quick" and not stale:
+        verdict_text = ("INCOMPLETE - quick fidelity" if overall == "INCOMPLETE" else
+                        f"{overall} (quick fidelity: also INCOMPLETE - not valid for a build/fly decision)")
 
     # ---- soft inputs ranked by the gates they drive ------------------------------------------
     soft = (R.get("ingest") or {}).get("data", {}).get("soft_inputs", [])
