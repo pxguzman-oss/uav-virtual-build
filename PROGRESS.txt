@@ -43,3 +43,4 @@ figure review, REVIEW_RESPONSE.txt. Scratch test dir /tmp/vbt (copy of out/), ne
 [R5] M3 committed. Stall (asym +-7.5 %): wing drop 9 deg, recovery 2-3 s, alt loss 44-46 m (WARN > 30 m team), alpha locked >break+3 for 6.7 s with stick held (WARN).
 [R6] M4 (+m2, m11 source) committed: assumption corners: spiral worst 7.9 s (washout 0), SM 13.5-25 % over corners (sweep +-2), Vv 0.0174 at V-tail dihedral 30.
 [R7] M10 + minors committed. Dense 25 m waypoints: waypoint-rate weave 3.9 deg at 0.46 Hz (f_wp 0.53); 75 m: 6.2 deg at 0.15 Hz but XT RMS 3.0 vs 6.4 m. stork_aero changed (m8 incidence) -> CFD standard re-runs.
+[R8] 01:04 final standard base run started (nohup, log /tmp/run_std_base.log); quick test in /tmp/vbq
