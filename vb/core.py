@@ -111,7 +111,9 @@ class Ctx:
     def gate(self, check, value, limit, kind=">=", severity="FAIL", unit="", note="", drivers=None, stage=None):
         """kind: '>=' (value must be >= limit), '<=', 'range' (limit=[lo, hi]), 'info' (never fails),
         'bool' (value truthy passes)."""
-        if value is None:
+        if kind == "error":
+            st = "ERROR"
+        elif value is None:
             st = "WARN" if severity != "INFO" else "INFO"
             note = (note + " (value not available)").strip()
         elif kind == ">=":

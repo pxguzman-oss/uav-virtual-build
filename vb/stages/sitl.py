@@ -269,13 +269,26 @@ def run(ctx):
                   note=f"Vs {vs_ref:.2f} m/s ({'pessimistic' if 'pess' in name else 'nominal'} CLmax model)",
                   drivers=["/airframe/lifting_surfaces/wing/cl_max", "/airframe/launch/launch_speed"])
         if name == "stall" and r.get("V_stall_1g_mean"):
-            G("SITL Vs(1g) vs aero stage abs(ratio-1)", abs(r["V_stall_1g_mean"] / Vs - 1), 0.10, "<=", "WARN",
-                     note=f"SITL {r['V_stall_1g_mean']} m/s vs {Vs} m/s; alt loss {max((s['alt_loss_m'] for s in r.get('stalls', [])), default=0)} m")
+            G("SITL Vs(1g) / Vs of the flown model (MODEL SELF-CONSISTENCY - reads back the table, NOT a stall validation)",
+              r["V_stall_1g_mean"] / Vs_nom, None, "info", "INFO",
+              note=f"SITL {r['V_stall_1g_mean']} m/s vs nominal {Vs_nom:.2f} m/s; the real CLmax/Vs is only known after the F1 stall test")
         if name == "stall" and r.get("stalls"):
-            st0 = r["stalls"][0]
-            G("(FBWA, idle, full back stick): altitude lost / max roll", st0["alt_loss_m"], None, "info", "INFO", "m",
-                     note=f"max alpha {st0['max_alpha_deg']} deg, roll {st0['max_abs_roll_deg']} deg; keep STALL_PREVENTION=1 and "
-                          f"practise stalls above {max(30, 1.5 * st0['alt_loss_m']):.0f} m")
+            sts = r["stalls"]
+            wd = max((x.get("wing_drop_deg") or 0) for x in sts)
+            G("wing drop within 5 s of the break, with +-7.5 % left/right CLmax asymmetry [deg]", wd, 30.0, "<=", "WARN", "deg",
+              note="TEAM CRITERION 30 deg; strip-theory post-stall roll damping and aileron loss in the model; real departure / "
+                   "spin behaviour UNKNOWN -> F1 stall test at >= 100 m is mandatory", drivers=["/airframe/lifting_surfaces/wing"])
+            recs = [x.get("recovery_s") for x in sts]
+            G("recovers within 10 s of releasing the stick (alpha < break - 2 deg, |roll| < 30 deg, sink < 2 m/s)",
+              all(x is not None and x <= 10 for x in recs), True, "bool", "FAIL", note=f"recovery times {recs} s")
+            al = [x.get("alt_loss_break_to_recovery_m") for x in sts if x.get("alt_loss_break_to_recovery_m") is not None]
+            if al:
+                G("altitude lost from the break to recovery [m]", max(al), 30.0, "<=", "WARN", "m",
+                  note=f"TEAM CRITERION 30 m; practise stalls above {max(30, 2 * max(al)):.0f} m with STALL_PREVENTION=0 only")
+            lk = max((x.get("locked_in_s") or 0) for x in sts)
+            G("post-stall pitch: time alpha stays > break + 3 deg with the stick held [s] (no nose-down break = locked-in stall)", lk, 3.0,
+              "<=", "WARN", "s", note=f"nose drop in 3 s after the break {[x.get('nose_drop_deg') for x in sts]} deg; post-stall Cm "
+                                     "pitch-up of AeroBuildup removed (artefact) -> real behaviour UNKNOWN")
         if name.startswith("fs_") and name != "fs_batt":
             fc = r.get("first_mode_change_after_trigger") or {}
             G(f"failsafe switches to RTL", fc.get("mode") == 11, True, "bool", "FAIL",

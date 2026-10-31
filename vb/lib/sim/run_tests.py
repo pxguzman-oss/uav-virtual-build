@@ -221,9 +221,10 @@ def t_stall(a):
     items = takeoff_items(alt=80)
     far_lat, far_lon = ll_offset(HOME[0], HOME[1], 20000, 0)
     items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=far_lat, lon=far_lon, alt=100))
-    s = new_run(name, a, params={"RC_OVERRIDE_TIME": -1, "STALL_PREVENTION": 0}, bridge_args=env_bargs(a))
+    # wing-drop test (review M3): left/right CLmax asymmetry +-x switched on in the JSBSim model
+    s = new_run(name, a, params={"RC_OVERRIDE_TIME": -1, "STALL_PREVENTION": 0}, bridge_args=env_bargs(a) + ["--stall-asym"])
     s.start()
-    meta = {"stalls": [], **env_meta(a)}
+    meta = {"stalls": [], "stall_asymmetry": True, **env_meta(a)}
     try:
         launch_and_climb(s, items, alt=75)
         s.sleep(25)

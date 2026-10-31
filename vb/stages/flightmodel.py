@@ -60,6 +60,20 @@ def run(ctx):
     ctx.gate("JSBSim tables: CLmax = lift-model CLmax (untrimmed), abs(ratio-1) (self-consistency)",
              None if not cl_un else abs(sp["CLmax"] / cl_un - 1), 0.02, "<=", "FAIL",
              note=f"tables {sp['CLmax']} vs lift model {cl_un}", drivers=["/airframe/lifting_surfaces/wing/cl_max"])
+    # post-stall pitching moment of the tables actually flown (review M3)
+    try:
+        import csv as _csv
+        rows_ = list(_csv.DictReader(open(gen / f"{m['name']}_aero_tables.csv")))
+        al_ = [float(x["alpha_deg"]) for x in rows_]; cm_ = [float(x["Cm"]) for x in rows_]; cl_t = [float(x["CL"]) for x in rows_]
+        a_s = al_[max(range(len(al_)), key=lambda i: cl_t[i] if -5 <= al_[i] <= 20 else -9)]
+        seg = [(a, c) for a, c in zip(al_, cm_) if a_s <= a <= a_s + 12]
+        rise = max((seg[j][1] - min(c for _, c in seg[:j + 1]) for j in range(len(seg))), default=0.0)
+        cps = (lm.get("cm_post_stall") or {})
+        ctx.gate("post-stall Cm rise in the flown tables (alpha_stall .. +12 deg); >0 = pitch-up", rise, 0.0, "<=", "WARN",
+                 note=f"AeroBuildup raw post-stall bump {cps.get('max_raw_rise', 0):.3f} removed as an artefact (no downwash change at "
+                      f"stall, NeuralFoil past Clmax) -> real post-stall pitch behaviour UNKNOWN until F1")
+    except Exception as e:
+        ctx.note(f"post-stall Cm check failed: {e}")
     # pessimistic-CLmax twin of the model (same everything, CL table capped at CLmax x (1-u)) for SITL launch checks
     cl_p = lm.get("CLmax_untrimmed_pessimistic")
     gen_p = ctx.dir / "gen_pess"

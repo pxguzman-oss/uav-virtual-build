@@ -279,14 +279,32 @@ def analyze_stall(run, meta, tr, df, events, model):
         nz = max(float(r.nz), 0.2)
         rho = 1.225 * (r.V_cas / max(r.V_tas, 0.1)) ** 2 * (1.0)  # CAS-based -> use sea-level
         v_s1g = float(r.V_cas) / math.sqrt(nz)
-        dd = tr[(tr.t >= st["t0"]) & (tr.t <= st["t1"] + 10)]       # include the recovery
+        dd = tr[(tr.t >= st["t0"]) & (tr.t <= st["t1"] + 15)]       # include the recovery
         after = dd[dd.t >= r.t]
-        out.append(dict(rep=k, t_stall=round(float(r.t), 2), CL_max_seen=round(float(r.CL), 3),
-                        alpha_at_CLmax_deg=round(float(r.alpha_deg), 2), V_cas_at_CLmax=round(float(r.V_cas), 2),
+        # post-stall behaviour (review M3): wing drop, pitch break, locked-in stall, recovery after stick release
+        tb, a_b, phi_b, th_b = float(r.t), float(r.alpha_deg), float(r.phi_deg), float(r.theta_deg)
+        w5 = tr[(tr.t >= tb) & (tr.t <= tb + 5)]
+        wing_drop = float((w5.phi_deg - phi_b).abs().max()) if len(w5) else None
+        held = tr[(tr.t >= tb) & (tr.t <= st["t1"])]
+        dt_ = float(np.median(np.diff(tr.t))) if len(tr) > 2 else 0.04
+        locked_s = float((held.alpha_deg > a_b + 3).sum() * dt_) if len(held) else 0.0
+        w3 = tr[(tr.t >= tb) & (tr.t <= tb + 3)]
+        nose_drop = float(th_b - w3.theta_deg.min()) if len(w3) else None
+        rec = tr[(tr.t > st["t1"]) & (tr.t <= st["t1"] + 15) & (tr.alpha_deg < a_b - 2) & (tr.phi_deg.abs() < 30) & (tr.Vz_up > -2.0)]
+        t_rec = float(rec.t.iloc[0]) if len(rec) else None
+        win = tr[(tr.t >= tb) & (tr.t <= (t_rec if t_rec is not None else st["t1"] + 15))]
+        alt_loss_rec = float(r.h_agl - win.h_agl.min()) if len(win) else None
+        out.append(dict(rep=k, t_stall=round(tb, 2), CL_max_seen=round(float(r.CL), 3),
+                        alpha_at_CLmax_deg=round(a_b, 2), V_cas_at_CLmax=round(float(r.V_cas), 2),
                         nz=round(nz, 2), V_stall_1g_est=round(v_s1g, 2),
                         min_cas=round(float(dd.V_cas.min()), 2), max_alpha_deg=round(float(dd.alpha_deg.max()), 1),
                         alt_loss_m=round(float(dd.h_agl.max() - after.h_agl.min()), 1),
-                        max_abs_roll_deg=round(float(dd.phi_deg.abs().max()), 1)))
+                        max_abs_roll_deg=round(float(dd.phi_deg.abs().max()), 1),
+                        wing_drop_deg=None if wing_drop is None else round(wing_drop, 1),
+                        nose_drop_deg=None if nose_drop is None else round(nose_drop, 1),
+                        locked_in_s=round(locked_s, 1), t_stick_release=round(float(st["t1"]), 2),
+                        recovery_s=None if t_rec is None else round(t_rec - float(st["t1"]), 1),
+                        alt_loss_break_to_recovery_m=None if alt_loss_rec is None else round(alt_loss_rec, 1)))
     res = {"stalls": out}
     if out:
         res["V_stall_1g_mean"] = round(float(np.mean([o["V_stall_1g_est"] for o in out])), 2)
@@ -304,8 +322,12 @@ def analyze_stall(run, meta, tr, df, events, model):
         if k < len(out):
             for a in ax:
                 a.axvline(out[k]["t_stall"], color=INK2, lw=0.8, ls=":")
-            ax[0].set_title(f"Stall {k}: CLmax {out[k]['CL_max_seen']} at {out[k]['V_cas_at_CLmax']} m/s, "
-                            f"nz {out[k]['nz']} -> Vs(1g) ~ {out[k]['V_stall_1g_est']} m/s", loc="left")
+            ax[0].set_title(f"Stall {k} (L/R CLmax asymmetry {'on' if meta.get('stall_asymmetry') else 'off'}): CLmax {out[k]['CL_max_seen']} "
+                            f"at {out[k]['V_cas_at_CLmax']} m/s; wing drop {out[k]['wing_drop_deg']} deg, "
+                            f"recovery {out[k]['recovery_s']} s, loss {out[k]['alt_loss_break_to_recovery_m']} m", loc="left", fontsize=8.5)
+            for a in ax:
+                a.axvline(meta["stalls"][k]["t1"], color=C[3], lw=0.8, ls="--")
+            ax[3].text(meta["stalls"][k]["t1"], ax[3].get_ylim()[0], " stick released", color=C[3], fontsize=8, va="bottom")
         save(fig, run, f"stall_{k}.png")
     return res
 
