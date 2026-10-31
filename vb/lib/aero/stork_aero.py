@@ -203,7 +203,7 @@ def viscous_corrections(g, r, V):
 
 
 # ================================== AVL ==============================================================
-def write_avl(g, path, afdir):
+def write_avl(g, path, afdir, include_vtail=True, include_body=True):
     """AVL input. Left/right wing and left/right V-tail panels are separate surfaces so each physical control
     surface gets its own control variable; sections ordered by increasing y => positive deflection = TE down."""
     os.makedirs(afdir, exist_ok=True)
@@ -238,7 +238,7 @@ def write_avl(g, path, afdir):
                 if cc["y0"] - 1e-9 <= y <= cc["y1"] + 1e-9:
                     L += ctrl_lines(f"{cname}_{tag}", cc["hinge_xc"])
             L.append("")
-    for side, tag in ((+1, "R"), (-1, "L")):
+    for side, tag in (((+1, "R"), (-1, "L")) if include_vtail else ()):
         L += ["#" + "=" * 60, "SURFACE", f"Vtail_{tag}", "8 1.0 12 1.0", "COMPONENT", "2", ""]
         ss = (0.0, 1.0) if side > 0 else (1.0, 0.0)
         for s in ss:
@@ -259,7 +259,8 @@ def write_avl(g, path, afdir):
             f.write(f" {x:.5f} {d_ / 2:.5f}\n")
         for x, d_ in zip(xn[1:], dd[1:]):
             f.write(f" {x:.5f} {-d_ / 2:.5f}\n")
-    L += ["#" + "=" * 60, "BODY", "Fuselage", "24 1.0", "BFIL", os.path.relpath(bfile, os.path.dirname(os.path.abspath(path))), ""]
+    if include_body:
+        L += ["#" + "=" * 60, "BODY", "Fuselage", "24 1.0", "BFIL", os.path.relpath(bfile, os.path.dirname(os.path.abspath(path))), ""]
     open(path, "w").write("\n".join(L) + "\n")
     names = [f"flap_R", "aileron_R", "flap_L", "aileron_L", "rv_R", "rv_L"]
     return names
@@ -312,13 +313,18 @@ def parse_avl_st(fn):
 
 
 # ================================== main analysis =====================================================
-def analyse(g, mass, avl_exe, outdir, V_cruise=14.0, speeds=(10.0, 14.0, 20.0)):
+def analyse(g, mass, avl_exe, outdir, V_cruise=14.0, speeds=(10.0, 14.0, 20.0), clmax_plan=None, clmax_u=None):
+    """Low-order aero dataset. The LIFT MODEL (vb/liftmodel.py) is applied to the AeroBuildup tables:
+    AVL-anchored linear lift, CLmax = min(AeroBuildup peak, Raymer 2-D cap, plan cl_max), no post-stall
+    pitch-up; nominal and pessimistic (x (1-u)) CLmax/Vs are returned (review C1/M2/M3)."""
+    sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..", "..")))
+    from vb import liftmodel as LM
     os.makedirs(outdir, exist_ok=True)
     log = {}
     ap = build_asb(g)
     S, b, c = g["ref"]["S"], g["ref"]["b"], g["ref"]["c"]
     rho = 1.225
-    W = mass * 9.81
+    W = mass * 9.80665
 
     # ---- 1. AeroBuildup alpha sweeps at several speeds (Re effect) -------------------------------
     alphas = np.concatenate([np.arange(-20, -10, 2.0), np.arange(-10, 20.01, 0.5), np.arange(22, 30.01, 2.0)])
@@ -330,29 +336,67 @@ def analyse(g, mass, avl_exe, outdir, V_cruise=14.0, speeds=(10.0, 14.0, 20.0)):
                          CD_profile=(CDp * g["parasite"]["excrescence_factor"]).tolist(), CD_induced=CDi.tolist(),
                          CD_extra=float(extra), wall_s=r["_wall_s"])
         log[f"buildup_V{V}_s"] = r["_wall_s"]
-    # ---- 2. beta sweep at cruise alpha ----------------------------------------------------------
     T = tables[V_cruise]
-    al = np.array(T["alpha_deg"]); CLa_arr = np.array(T["CL"])
+    al = np.array(T["alpha_deg"]); CL_ab_c = np.array(T["CL"])
     CL_cruise = W / (0.5 * rho * V_cruise ** 2 * S)
     lin = (al > -4) & (al < 8)
-    a_cruise = float(np.interp(CL_cruise, CLa_arr[lin], al[lin]))
+    a_cruise_ab = float(np.interp(CL_cruise, CL_ab_c[lin], al[lin]))
+
+    # ---- 2. AVL lift line on the SAME full geometry (anchor of the linear lift) -------------------
+    avl_file = os.path.join(outdir, "stork.avl")
+    write_avl(g, avl_file, os.path.join(outdir, "avl_airfoils"))
+    anc_alphas = [-4.0, 0.0, 4.0, 8.0]
+    anc_res, t_anc = run_avl(avl_exe, avl_file, anc_alphas, outdir, tag="anchor")
+    log["avl_anchor_s"] = t_anc
+    p_avl = np.polyfit(np.array(anc_alphas) * DEG, [r["CLtot"] for r in anc_res], 1)
+    CLa_anchor, CL0_anchor = float(p_avl[0]), float(p_avl[1])
+
+    # ---- 3. anchored tables (AeroBuildup stall shape kept; drag polar CD(CL) kept) -----------------
+    anchor_info = {}
+    for V, tb in tables.items():
+        cl1, cd1, info = LM.anchor_table(tb["alpha_deg"], tb["CL"], tb["CD"], CLa_anchor, CL0_anchor)
+        tb["CL_aerobuildup_raw"] = list(tb["CL"]); tb["CD_aerobuildup_raw"] = list(tb["CD"])
+        tb["CL"] = cl1.tolist(); tb["CD"] = cd1.tolist()
+        anchor_info[V] = info
+    Vlo = min(speeds)
+    tlo = tables[Vlo]
+    clmax_ab_raw = float(np.asarray(tlo["CL_aerobuildup_raw"])[LM.stall_index(tlo["alpha_deg"], tlo["CL_aerobuildup_raw"])])
+    clmax_anch = float(np.asarray(tlo["CL"])[LM.stall_index(tlo["alpha_deg"], tlo["CL"])])
+
+    # ---- 4. 3-D CLmax sources -> ONE nominal value + uncertainty band -----------------------------
+    sweep = g["wing"].get("sweep_c4_deg", 0.0) * DEG
+    cap = clmax_plan or clmax_anch
+    sec = None
+    for _ in range(2):
+        Re_s = rho * LM.vs(mass, S, cap) * c / 1.789e-5
+        sec = LM.section_clmax(g["wing"]["airfoil"], Re_s)
+        cap = LM.RAYMER_3D_FACTOR * sec["Clmax_2d"] * math.cos(sweep)
+    sources = {"AeroBuildup peak (AVL-anchored lift line)": clmax_anch,
+               f"Raymer 0.9 x Clmax_2D {sec['Clmax_2d']:.3f} (NeuralFoil, Re {sec['Re']/1e3:.0f}k) x cos(sweep)": cap}
+    if clmax_plan:
+        sources["plan wing cl_max"] = float(clmax_plan)
+    src = min(sources, key=sources.get)
+    CLmax_nom = sources[src]
+    u = clmax_u if clmax_u is not None else LM.DEFAULT_CLMAX_UNCERTAINTY
+    for V, tb in tables.items():
+        tb["CL"] = LM.cap_table(tb["alpha_deg"], tb["CL"], CLmax_nom).tolist()
+    CLf_c = np.array(T["CL"])
+    a_cruise = float(np.interp(CL_cruise, CLf_c[lin], al[lin]))
+
+    # ---- 5. beta sweep / AeroBuildup derivatives / drag breakdown: at AeroBuildup's OWN cruise state ----
     betas = np.arange(-20, 20.01, 2.0)
-    rb = [run_buildup(ap, g, V_cruise, [a_cruise], beta=bb) for bb in betas]
-    beta_tab = dict(alpha_deg=a_cruise, beta_deg=betas.tolist(),
+    rb = [run_buildup(ap, g, V_cruise, [a_cruise_ab], beta=bb) for bb in betas]
+    beta_tab = dict(alpha_deg=a_cruise_ab, beta_deg=betas.tolist(),
                     CY=[float(x["CY"][0]) for x in rb], Cl=[float(x["Cl"][0]) for x in rb],
                     Cn=[float(x["Cn"][0]) for x in rb],
                     CD=[float(viscous_corrections(g, x, V_cruise)[0][0]) for x in rb])
-    # ---- 3. AeroBuildup stability derivatives at cruise -----------------------------------------
-    rs = run_buildup(ap, g, V_cruise, [a_cruise], stab=True)
+    rs = run_buildup(ap, g, V_cruise, [a_cruise_ab], stab=True)
     ab_der = {k: float(np.asarray(rs[k]).ravel()[0]) for k in
               ["CLa", "Cma", "CYb", "Clb", "Cnb", "CLp", "Clp", "Cnp", "CYp", "CLq", "Cmq", "CYr", "Clr", "Cnr", "x_np"]}
     log["buildup_stab_s"] = rs["_wall_s"]
-    # drag breakdown at cruise
-    r1 = run_buildup(ap, g, V_cruise, [a_cruise])
+    r1 = run_buildup(ap, g, V_cruise, [a_cruise_ab])
     q = 0.5 * rho * V_cruise ** 2
     br = {}
-    for comp in r1["wing_aero_components"]:
-        pass
     names_w = [w.name for w in ap.wings]; names_f = [f.name for f in ap.fuselages]
     for n, comp in zip(names_w, r1["wing_aero_components"]):
         br[n] = float(np.asarray(comp.D).ravel()[0] / (q * S))
@@ -362,19 +406,19 @@ def analyse(g, mass, avl_exe, outdir, V_cruise=14.0, speeds=(10.0, 14.0, 20.0)):
     br["excrescence(+%.0f%% of profile)" % ((g["parasite"]["excrescence_factor"] - 1) * 100)] = float(CDp1[0] * (g["parasite"]["excrescence_factor"] - 1))
     for k, v in extra_parasite_CDA(g).items():
         br[k] = v / S
-    breakdown = dict(V=V_cruise, alpha_deg=a_cruise, CL=float(r1["CL"][0]), CD_total=float(CDtot[0]),
-                     CD_induced=float(CDi1[0]), components_CD=br)
-    # CD0 estimate: fit CD = CD0 + k (CL-CLmin)^2 over linear range
-    m = (al > -4) & (al < 7)
+    breakdown = dict(V=V_cruise, alpha_deg=a_cruise, alpha_deg_aerobuildup=a_cruise_ab, CL=float(r1["CL"][0]),
+                     CD_total=float(CDtot[0]), CD_induced=float(CDi1[0]), components_CD=br)
+    # CD0 estimate: fit CD = CD0 + k (CL-CLmin)^2 over the linear range of the FINAL cruise table
+    m = (al > -4) & (al < 8)
     CDarr = np.array(T["CD"])
-    pf = np.polyfit(CLa_arr[m], CDarr[m], 2)
+    pf = np.polyfit(CLf_c[m], CDarr[m], 2)
     k_ = pf[0]; CLmind = -pf[1] / (2 * pf[0]); CD0 = pf[2] - pf[1] ** 2 / (4 * pf[0])
     e_eff = 1 / (math.pi * (b ** 2 / S) * k_)
 
-    # ---- 4. AVL: stability + control derivatives -------------------------------------------------
-    avl_file = os.path.join(outdir, "stork.avl")
-    write_avl(g, avl_file, os.path.join(outdir, "avl_airfoils"))
+    # ---- 6. AVL: stability + control derivatives at the MODEL cruise alpha ------------------------------
     avl_alphas = [-4.0, 0.0, round(a_cruise, 2), 4.0, 8.0]
+    if round(a_cruise, 2) in (-4.0, 0.0, 4.0, 8.0):
+        avl_alphas = [-4.0, 0.0, 4.0, 8.0]
     avl_res, t_avl = run_avl(avl_exe, avl_file, avl_alphas, outdir)
     log["avl_s"] = t_avl
     ac = avl_res[avl_alphas.index(round(a_cruise, 2))]
@@ -395,10 +439,8 @@ def analyse(g, mass, avl_exe, outdir, V_cruise=14.0, speeds=(10.0, 14.0, 20.0)):
         avl_ctrl[name] = dd
     avl_alpha_tab = dict(alpha_deg=avl_alphas, CL=[r.get("CLtot") for r in avl_res], Cm=[r.get("Cmtot") for r in avl_res],
                          CDind=[r.get("CDind") for r in avl_res])
-    # ---- 4b. Cm correction: AeroBuildup has no wing->tail downwash and no fuselage/tail interference, so its
-    # Cm_alpha is too stable (x_np too far aft). Replace the LINEAR part of each Cm table with AVL's (which
-    # includes downwash and the fuselage BODY) and keep AeroBuildup's nonlinear (stall) shape:
-    #   Cm(a) = Cm_AB(a) + [Cm0_AVL - Cm0_AB] + [Cma_AVL - Cma_AB] * clip(a, -10, 15 deg)
+    # ---- 6b. Cm: linear part from AVL (downwash + fuselage BODY), AeroBuildup nonlinear shape kept, then
+    #          no post-stall pitch-up (artefact: no downwash change at stall, NeuralFoil past Clmax)
     aa = np.array(avl_alphas) * DEG
     pa = np.polyfit(aa, np.array(avl_alpha_tab["Cm"], float), 1)
     cm_corr = {}
@@ -408,11 +450,14 @@ def analyse(g, mass, avl_exe, outdir, V_cruise=14.0, speeds=(10.0, 14.0, 20.0)):
         pb_ = np.polyfit(al_[mm_] * DEG, cm[mm_], 1)
         corr = (pa[1] - pb_[1]) + (pa[0] - pb_[0]) * np.clip(al_, -10, 15) * DEG
         tb["Cm_aerobuildup_raw"] = cm.tolist()
-        tb["Cm"] = (cm + corr).tolist()
-        cm_corr[V] = dict(Cm0_AB=float(pb_[1]), Cma_AB=float(pb_[0]), Cm0_AVL=float(pa[1]), Cma_AVL=float(pa[0]))
+        a_st = float(al_[LM.stall_index(al_, tb["CL"])])
+        cm_m, info = LM.monotone_post_stall_cm(al_, cm + corr, a_st)
+        tb["Cm"] = cm_m.tolist()
+        cm_corr[V] = dict(Cm0_AB=float(pb_[1]), Cma_AB=float(pb_[0]), Cm0_AVL=float(pa[1]), Cma_AVL=float(pa[0]),
+                          post_stall=info)
     log["cm_correction"] = cm_corr
 
-    # ---- 5. ASB VLM cross-check -----------------------------------------------------------------
+    # ---- 7. ASB VLM cross-check -----------------------------------------------------------------
     t0 = time.time()
     vlm = asb.VortexLatticeMethod(ap, asb.OperatingPoint(velocity=V_cruise, alpha=a_cruise), xyz_ref=ap.xyz_ref,
                                   spanwise_resolution=8, chordwise_resolution=8)
@@ -423,7 +468,7 @@ def analyse(g, mass, avl_exe, outdir, V_cruise=14.0, speeds=(10.0, 14.0, 20.0)):
         vlm_der = {"error": repr(e)}
     log["asb_vlm_s"] = time.time() - t0
 
-    # ---- 6. Performance numbers -----------------------------------------------------------------
+    # ---- 8. Performance numbers (all from the FINAL tables) -------------------------------------
     def trimmed_CL_table(V):
         """Correct CL for tail trim load using AVL symmetric ruddervator derivatives."""
         TT = tables[V]
@@ -446,25 +491,59 @@ def analyse(g, mass, avl_exe, outdir, V_cruise=14.0, speeds=(10.0, 14.0, 20.0)):
                        CLmax_trimmed=float(CLt[it]), trim_def_at_CLmax_deg=float(de[it] / DEG),
                        LD_max=float(LD[j]), CL_at_LDmax=float(CL[j]), alpha_LDmax_deg=float(al_[j]),
                        Re_mac=rho * V * c / 1.789e-5)
-    CLmax_lo = perf[min(speeds)]["CLmax_trimmed"]
-    V_stall = math.sqrt(2 * W / (rho * S * CLmax_lo))
-    # power required vs speed (aerodynamic power D*V) using the speed-closest table
-    Vs = np.arange(8, 25.1, 1.0)
-    preq = []
-    for V in Vs:
-        Vt = min(speeds, key=lambda x: abs(x - V))
+    CLmax_trim_nom = perf[Vlo]["CLmax_trimmed"]
+    dCL_trim = CLmax_trim_nom - perf[Vlo]["CLmax_untrimmed"]
+    CLmax_trim_pess = CLmax_trim_nom * (1 - u)
+    V_stall = math.sqrt(2 * W / (rho * S * CLmax_trim_nom))
+    V_stall_pess = math.sqrt(2 * W / (rho * S * CLmax_trim_pess))
+    # power required vs speed (aerodynamic power D*V), CD interpolated between the two bracketing speed tables
+    sp_sorted = sorted(speeds)
+
+    def cd_at(Vt, CLreq):
         TT = tables[Vt]; al_ = np.array(TT["alpha_deg"]); CL = np.array(TT["CL"]); CD_ = np.array(TT["CD"])
-        CLreq = W / (0.5 * rho * V ** 2 * S)
         rng = (al_ >= -6) & (al_ <= perf[Vt]["alpha_CLmax_deg"])
         if CLreq > CL[rng].max():
-            preq.append(None); continue
-        CDv = float(np.interp(CLreq, CL[rng], CD_[rng]))
+            return None
+        return float(np.interp(CLreq, CL[rng], CD_[rng]))
+    Vs = np.arange(8, 25.1, 0.5)
+    preq = []
+    for V in Vs:
+        CLreq = W / (0.5 * rho * V ** 2 * S)
+        lo_ = max([x for x in sp_sorted if x <= V], default=sp_sorted[0])
+        hi_ = min([x for x in sp_sorted if x >= V], default=sp_sorted[-1])
+        c_lo, c_hi = cd_at(lo_, CLreq), cd_at(hi_, CLreq)
+        if c_lo is None or c_hi is None:
+            continue
+        f = 0.0 if hi_ == lo_ else (V - lo_) / (hi_ - lo_)
+        CDv = (1 - f) * c_lo + f * c_hi
         preq.append(dict(V=float(V), CL=CLreq, CD=CDv, LD=CLreq / CDv, P_aero_W=0.5 * rho * V ** 3 * S * CDv))
-    preq = [x for x in preq if x]
-    return dict(tables=tables, beta_table=beta_tab, a_cruise=a_cruise, CL_cruise=CL_cruise, ab_der=ab_der,
-                avl_der=avl_der, avl_ctrl=avl_ctrl, avl_alpha_tab=avl_alpha_tab, vlm_der=vlm_der,
+    # ---- 9. lift-model record + cross-check table (same geometry, same alpha) ------------------------
+    def tab_at(key, a_):
+        return float(np.interp(a_, al, np.array(T[key])))
+    xc = []
+    for a_ in (0.0, 4.0, round(a_cruise, 2), 8.0):
+        row = dict(alpha_deg=a_, aerobuildup_raw=tab_at("CL_aerobuildup_raw", a_),
+                   avl=float(np.polyval(np.polyfit(np.array(avl_alphas), avl_alpha_tab["CL"], 1), a_)),
+                   model=tab_at("CL", a_))
+        if a_ == round(a_cruise, 2) and "CL" in vlm_der:
+            row["asb_vlm"] = vlm_der["CL"]
+        xc.append(row)
+    lift_model = dict(
+        method="linear lift = AVL (VLM + fuselage BODY) on the full flight-model geometry; AeroBuildup keeps only the stall shape; "
+               "drag polar CD(CL) = AeroBuildup; CLmax = min(sources); post-stall Cm non-increasing",
+        CLa_anchor=CLa_anchor, CL0_anchor=CL0_anchor, CLa_aerobuildup=anchor_info[V_cruise]["CLa_AB"],
+        CL0_aerobuildup=anchor_info[V_cruise]["CL0_AB"], section=sec,
+        viscous_slope_ratio_2d=sec["Cla_2d_per_rad"] / (2 * math.pi),
+        clmax_aerobuildup_raw=clmax_ab_raw, clmax_sources=sources, clmax_source=src,
+        CLmax_untrimmed_nominal=CLmax_nom, CLmax_untrimmed_pessimistic=CLmax_nom * (1 - u),
+        CLmax_trimmed_nominal=CLmax_trim_nom, CLmax_trimmed_pessimistic=CLmax_trim_pess, dCL_trim=dCL_trim,
+        uncertainty_rel=u, V_stall_nominal=V_stall, V_stall_pessimistic=V_stall_pess,
+        alpha_stall_deg=perf[Vlo]["alpha_CLmax_deg"], crosscheck=xc, cm_post_stall=cm_corr[V_cruise]["post_stall"],
+        rho=rho, mass_kg=mass)
+    return dict(tables=tables, beta_table=beta_tab, a_cruise=a_cruise, a_cruise_aerobuildup=a_cruise_ab, CL_cruise=CL_cruise,
+                ab_der=ab_der, avl_der=avl_der, avl_ctrl=avl_ctrl, avl_alpha_tab=avl_alpha_tab, vlm_der=vlm_der,
                 breakdown=breakdown, polar_fit=dict(CD0=CD0, CL_minD=CLmind, k=k_, e_eff=e_eff), perf=perf,
-                V_stall=V_stall, power=preq, log=log, avl_controls_map=cmap)
+                V_stall=V_stall, V_stall_pess=V_stall_pess, lift_model=lift_model, power=preq, log=log, avl_controls_map=cmap)
 
 
 def make_dataset(g, mass, res, args):
@@ -518,7 +597,9 @@ def make_dataset(g, mass, res, args):
             "tools": {"AeroSandbox": asb.__version__, "NeuralFoil": __import__("neuralfoil").__version__,
                       "AVL": "3.40 (github.com/mayerrobert/avl, gfortran 13)",
                       "method": "Static/longitudinal tables: ASB AeroBuildup (NeuralFoil section polars, model_size='small') "
-                                "+ excrescence factor + extra CDA items. Lateral/rate/control derivatives: AVL VLM (wing+V-tail+fuselage BODY). "
+                                "+ excrescence factor + extra CDA items, with the LIFT MODEL of vb/liftmodel.py applied: linear lift "
+                                "anchored to AVL on the same geometry, CLmax = min(AeroBuildup peak, Raymer 0.9 Clmax_2D cap, plan cl_max), "
+                                "no post-stall pitch-up. Lateral/rate/control derivatives: AVL VLM (wing+V-tail+fuselage BODY). "
                                 "Cmadot: estimate 0.34*Cmq."},
             "wall_time_s": res["log"],
         },
@@ -526,6 +607,7 @@ def make_dataset(g, mass, res, args):
                       "frame": "structural: origin wing-root LE on centreline, +X aft, +Y right, +Z up; coefficients in stability axes, standard signs",
                       "mass_kg": mass},
         "conditions": {"V_cruise_mps": args.v_cruise, "alpha_cruise_deg": res["a_cruise"], "CL_cruise": res["CL_cruise"],
+                       "alpha_cruise_deg_aerobuildup_raw": res.get("a_cruise_aerobuildup"),
                        "Re_mac_cruise": 1.225 * args.v_cruise * c / 1.789e-5, "rho": 1.225},
         "alpha_tables": {str(V): {"V_mps": V, "Re_mac": 1.225 * V * c / 1.789e-5, **{k: v for k, v in tb.items() if k != "wall_s"}}
                          for V, tb in res["tables"].items()},
@@ -536,7 +618,8 @@ def make_dataset(g, mass, res, args):
         "drag_breakdown_cruise": res["breakdown"],
         "polar_fit": res["polar_fit"],
         "performance": {"by_speed": {str(k): v for k, v in res["perf"].items()}, "V_stall_mps_trimmed_flaps0": res["V_stall"],
-                        "power_required_aero": res["power"]},
+                        "V_stall_mps_trimmed_flaps0_pessimistic": res["V_stall_pess"], "power_required_aero": res["power"]},
+        "lift_model": res["lift_model"],
         "avl_alpha_table": res["avl_alpha_tab"],
     }
     # sim export (sim/schema/aircraft_model.schema.json 'aero' block + surfaces derivatives)
@@ -551,19 +634,32 @@ def make_dataset(g, mass, res, args):
 def plots(ds, outdir):
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     fig, ax = plt.subplots(2, 2, figsize=(12, 9))
-    for k, t in ds["alpha_tables"].items():
+    cols = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
+    for i, (k, t) in enumerate(sorted(ds["alpha_tables"].items(), key=lambda kv: float(kv[0]))):
         lab = f"V={t['V_mps']:.0f} m/s Re={t['Re_mac'] / 1e3:.0f}k"
-        ax[0, 0].plot(t["alpha_deg"], t["CL"], label=lab)
-        ax[0, 1].plot(t["CD"], t["CL"], label=lab)
-        ax[1, 0].plot(t["alpha_deg"], t["Cm"], label=lab)
-        ax[1, 1].plot(t["alpha_deg"], np.array(t["CL"]) / np.array(t["CD"]), label=lab)
+        col = cols[i % 4]
+        ax[0, 0].plot(t["alpha_deg"], t["CL"], color=col, label=lab + " (model)")
+        if "CL_aerobuildup_raw" in t:
+            ax[0, 0].plot(t["alpha_deg"], t["CL_aerobuildup_raw"], color=col, lw=0.8, ls=":")
+        ax[0, 1].plot(t["CD"], t["CL"], color=col, label=lab)
+        ax[1, 0].plot(t["alpha_deg"], t["Cm"], color=col, label=lab + " (model)")
+        if "Cm_aerobuildup_raw" in t:
+            ax[1, 0].plot(t["alpha_deg"], t["Cm_aerobuildup_raw"], color=col, lw=0.8, ls=":")
+        ax[1, 1].plot(t["alpha_deg"], np.array(t["CL"]) / np.array(t["CD"]), color=col, label=lab)
     a = ds["avl_alpha_table"]
-    ax[0, 0].plot(a["alpha_deg"], a["CL"], "ko", label="AVL (inviscid)")
+    ax[0, 0].plot(a["alpha_deg"], a["CL"], "ko", label="AVL (inviscid, anchor of the linear lift)")
+    ax[0, 0].plot([], [], color="#52514e", lw=0.8, ls=":", label="AeroBuildup raw (dotted)")
     ax[1, 0].plot(a["alpha_deg"], a["Cm"], "ko", label="AVL")
+    lm = ds.get("lift_model")
+    if lm:
+        for v, ls_, lab in ((lm["CLmax_untrimmed_nominal"], "--", "CLmax nominal (untrimmed)"),
+                            (lm["CLmax_untrimmed_pessimistic"], ":", "CLmax pessimistic")):
+            ax[0, 0].axhline(v, color="#e34948", ls=ls_, lw=1)
+            ax[0, 0].text(-19, v + 0.02, f"{lab} {v:.2f}", color="#e34948", fontsize=8)
     ax[0, 0].set(xlabel="alpha [deg]", ylabel="CL", xlim=(-20, 30)); ax[0, 1].set(xlabel="CD", ylabel="CL", xlim=(0, 0.2))
     ax[1, 0].set(xlabel="alpha [deg]", ylabel="Cm (about CG ref)", xlim=(-20, 30)); ax[1, 1].set(xlabel="alpha [deg]", ylabel="L/D", xlim=(-5, 20), ylim=(-5, 20))
     for x in ax.ravel(): x.grid(alpha=.3); x.legend(fontsize=7)
-    fig.suptitle(f"{ds['name']}: AeroBuildup (+excrescence, extras) vs AVL")
+    fig.suptitle(f"{ds['name']}: lift model (AVL-anchored AeroBuildup, CLmax capped) vs raw AeroBuildup and AVL")
     fig.tight_layout(); fig.savefig(os.path.join(outdir, "aero_tables.png"), dpi=100)
 
 

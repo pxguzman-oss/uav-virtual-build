@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from .. import plan as P
+from .. import liftmodel as LM
 from ..adapters import model2sim
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,8 +55,30 @@ def run(ctx):
     if r.returncode != 0:
         raise RuntimeError("gen_model failed: " + r.stderr[-800:])
     sp = json.loads((gen / f"{m['name']}_static_perf.json").read_text())
-    ctx.gate("JSBSim tables: stall speed vs aero stage abs(ratio-1)", abs(sp["Vs_1g_mps"] / aero["V_stall"] - 1), 0.08, "<=", "WARN",
-             note=f"tables {sp['Vs_1g_mps']} m/s vs aero {aero['V_stall']:.2f} m/s (untrimmed vs trimmed CLmax)")
+    lm = aero.get("lift_model") or {}
+    cl_un = lm.get("CLmax_untrimmed_nominal")
+    ctx.gate("JSBSim tables: CLmax = lift-model CLmax (untrimmed), abs(ratio-1) (self-consistency)",
+             None if not cl_un else abs(sp["CLmax"] / cl_un - 1), 0.02, "<=", "FAIL",
+             note=f"tables {sp['CLmax']} vs lift model {cl_un}", drivers=["/airframe/lifting_surfaces/wing/cl_max"])
+    # pessimistic-CLmax twin of the model (same everything, CL table capped at CLmax x (1-u)) for SITL launch checks
+    cl_p = lm.get("CLmax_untrimmed_pessimistic")
+    gen_p = ctx.dir / "gen_pess"
+    name_p = None
+    if cl_p:
+        import copy
+        mp = copy.deepcopy(m)
+        mp["name"] = m["name"] + "_pess"
+        t = mp["aero"]["alpha_tables"]
+        t["CL"] = LM.cap_table(t["alpha_deg"], t["CL"], cl_p).tolist()
+        mp["aero"]["derivatives"] = dict(mp["aero"]["derivatives"], CLmax=cl_p)
+        mp["provenance"]["aero"] += f"; PESSIMISTIC twin: CL table capped at CLmax {cl_p:.3f}"
+        gen_p.mkdir(exist_ok=True)
+        mfp = ctx.dir / f"{mp['name']}.json"
+        mfp.write_text(json.dumps(mp, indent=1))
+        rp = subprocess.run([sys.executable, str(LIB / "gen_model.py"), str(mfp), "-o", str(gen_p)], capture_output=True, text=True)
+        if rp.returncode != 0:
+            raise RuntimeError("gen_model (pessimistic twin) failed: " + rp.stderr[-800:])
+        name_p = mp["name"]
 
     # ---- derived ArduPilot parameters ---------------------------------------------------------
     env = plan["envelope"]
@@ -69,13 +92,15 @@ def run(ctx):
     servo = read_parm(gen / f"{m['name']}_model.parm")
     hints = prop.get("ardupilot_hints", {})
     Vs = aero["V_stall"]
+    Vs_p = aero.get("V_stall_pess") or Vs
     der, why = {}, {}
 
     def put(k, v, reason):
         der[k] = v
         why[k] = reason
-    put("AIRSPEED_STALL", round(Vs, 1), "aero_lowfi trimmed stall speed (flaps 0, 1 g)")
-    put("AIRSPEED_MIN", math.ceil(max(1.25 * Vs, env.get("v_stall_target", 0)) * 2) / 2, "1.25 x Vs")
+    put("AIRSPEED_STALL", math.ceil(Vs_p * 10) / 10, f"PESSIMISTIC trimmed 1 g stall speed (nominal {Vs:.2f} m/s; lift-model CLmax band)")
+    put("AIRSPEED_MIN", math.ceil(max(1.25 * Vs, 1.2 * Vs_p, env.get("v_stall_target", 0)) * 2) / 2,
+        "max(1.25 x Vs nominal, 1.2 x Vs pessimistic), rounded up to 0.5 m/s")
     put("AIRSPEED_CRUISE", env["v_cruise"], "envelope.v_cruise")
     vmax_level = prop.get("cruise_unit", {}).get("v_max_level") or env.get("v_max_level", 22)
     put("AIRSPEED_MAX", round(min(env.get("v_max_level", 99), 0.88 * env["v_ne"], vmax_level - 1), 1),
@@ -122,10 +147,12 @@ def run(ctx):
     final.update(der)
     final.update(plan_p)
     # gates on the final values
-    ctx.gate("AIRSPEED_MIN >= 1.2 x Vs", final["AIRSPEED_MIN"] / Vs, 1.2, ">=", "FAIL", note=f"{final['AIRSPEED_MIN']} vs Vs {Vs:.1f} m/s",
+    ctx.gate("AIRSPEED_MIN / PESSIMISTIC Vs >= 1.2", final["AIRSPEED_MIN"] / Vs_p, 1.2, ">=", "FAIL",
+             note=f"AIRSPEED_MIN {final['AIRSPEED_MIN']} m/s vs Vs pessimistic {Vs_p:.2f} (nominal {Vs:.2f}) m/s",
              drivers=["/avionics/params/AIRSPEED_MIN", "/airframe/lifting_surfaces/wing/cl_max"])
-    ctx.gate("AIRSPEED_MIN x sqrt(n at ROLL_LIMIT) >= Vs (no stall in max-bank turn)",
-             final["AIRSPEED_MIN"] / (Vs * math.sqrt(1 / math.cos(math.radians(final["ROLL_LIMIT_DEG"])))), 1.05, ">=", "WARN")
+    ctx.gate("AIRSPEED_MIN / (PESSIMISTIC Vs x sqrt(n at ROLL_LIMIT)) >= 1.05 (no stall in a max-bank turn)",
+             final["AIRSPEED_MIN"] / (Vs_p * math.sqrt(1 / math.cos(math.radians(final["ROLL_LIMIT_DEG"])))), 1.05, ">=", "WARN",
+             note=f"ROLL_LIMIT_DEG {final['ROLL_LIMIT_DEG']}", drivers=["/avionics/params/AIRSPEED_MIN", "/airframe/lifting_surfaces/wing/cl_max"])
     ctx.gate("AIRSPEED_MAX <= 0.88 VNE", final["AIRSPEED_MAX"], 0.88 * env["v_ne"], "<=", "FAIL", "m/s")
     ctx.gate("AIRSPEED_MAX >= 1.5 x AIRSPEED_MIN (TECS range)", final["AIRSPEED_MAX"] / final["AIRSPEED_MIN"], 1.5, ">=", "WARN")
     ctx.gate("AIRSPEED_CRUISE between MIN and MAX", final["AIRSPEED_MIN"] <= final["AIRSPEED_CRUISE"] <= final["AIRSPEED_MAX"], True, "bool", "FAIL")
@@ -144,6 +171,9 @@ def run(ctx):
     ctx.add_file(ctx.dir / "derived.param", "ArduPilot parameter file for this airframe", "param")
     ctx.add_file(mf, "aircraft model JSON (sim input contract)", "json")
     data = dict(model_name=m["name"], model_json=str(mf.relative_to(ctx.dir)), gen_dir="gen", static_perf=sp,
+                model_name_pess=name_p, gen_dir_pess="gen_pess" if name_p else None, V_stall=Vs, V_stall_pess=Vs_p,
                 params=final, derived=der, derived_why=why, plan_overrides=plan_p, is_vtol=is_vtol, camera_channel=cam)
-    summ = dict(model=m["name"], Vs_tables=sp["Vs_1g_mps"], LD_max=sp["LD_max"], params=len(final), derived=len(der))
+    summ = dict(model=m["name"], CLmax_tables=sp["CLmax"], Vs_nominal=round(Vs, 2), Vs_pessimistic=round(Vs_p, 2),
+                AIRSPEED_STALL=final.get("AIRSPEED_STALL"), AIRSPEED_MIN=final.get("AIRSPEED_MIN"), LD_max=sp["LD_max"],
+                params=len(final), derived=len(der))
     return dict(summary=summ, data=data)

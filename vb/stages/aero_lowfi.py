@@ -8,6 +8,7 @@ import types
 import numpy as np
 
 from .. import env, plan as P
+from .. import liftmodel as LM
 from ..adapters import geom2aero
 from ..figures import style, save, PALETTE, INK2
 from ..flight_dyn import modes
@@ -27,7 +28,11 @@ def run(ctx):
     vc = float(env_["v_cruise"])
     speeds = tuple(sorted(set(float(s) for s in an.get("speeds", [10, 14, 20])) | {vc}))
     out = ctx.dir
-    res = sa.analyse(g, mass["mass_kg"], avl, str(out), V_cruise=vc, speeds=speeds)
+    w0 = P.main_wing(plan)
+    clmax_node = w0.get("cl_max")
+    clmax_plan = P.val(clmax_node)
+    clmax_u = LM.uncertainty_of(clmax_node)
+    res = sa.analyse(g, mass["mass_kg"], avl, str(out), V_cruise=vc, speeds=speeds, clmax_plan=clmax_plan, clmax_u=clmax_u)
     args = types.SimpleNamespace(v_cruise=vc, speeds=speeds)
     ds, sim = sa.make_dataset(g, mass["mass_kg"], res, args)
     ds["provenance"]["geometry"] = f"build plan {ctx.plan_path.name} ({ctx.variant})"
@@ -42,15 +47,35 @@ def run(ctx):
     w = P.main_wing(plan)
     S, b, c = g["ref"]["S"], g["ref"]["b"], g["ref"]["c"]
     m = mass["mass_kg"]
-    Vs = ds["performance"]["V_stall_mps_trimmed_flaps0"]
+    lm = ds["lift_model"]
+    Vs = lm["V_stall_nominal"]
+    Vs_p = lm["V_stall_pessimistic"]
+    cl_drv = ["/airframe/lifting_surfaces/wing/cl_max", "/components (mass)"]
+    vs_note = (f"Vs nominal {Vs:.2f} / pessimistic {Vs_p:.2f} m/s (CLmax trimmed {lm['CLmax_trimmed_nominal']:.3f} / "
+               f"{lm['CLmax_trimmed_pessimistic']:.3f}, -{100*lm['uncertainty_rel']:.0f} %)")
 
     # ---- gates -------------------------------------------------------------------------------
+    # lift-model credibility: AeroBuildup vs the AVL anchor on the same geometry (info; CFD checks the model)
+    xc = next((r for r in lm["crosscheck"] if r["alpha_deg"] == 4.0), lm["crosscheck"][0])
+    ctx.gate("lift model: AeroBuildup raw CL / AVL CL at alpha 4 deg (same geometry) - raw buildup NOT used for the linear lift",
+             xc["aerobuildup_raw"] / xc["avl"], None, "info", "INFO",
+             note=f"AeroBuildup {xc['aerobuildup_raw']:.3f}, AVL {xc['avl']:.3f}, model {xc['model']:.3f}; CFD stage checks the model")
+    ctx.gate("lift model: 3-D CLmax (untrimmed) used by every stage", lm["CLmax_untrimmed_nominal"], None, "info", "INFO",
+             note=f"source: {lm['clmax_source']}; candidates " + ", ".join(f"{k.split(' (')[0]} {v:.3f}" for k, v in lm["clmax_sources"].items()),
+             drivers=["/airframe/lifting_surfaces/wing/cl_max"])
+    if clmax_plan:
+        model_only = min(v for k, v in lm["clmax_sources"].items() if not k.startswith("plan"))
+        ctx.gate("plan wing cl_max vs model CLmax: abs(ratio-1) within the stated uncertainty", abs(clmax_plan / model_only - 1),
+                 lm["uncertainty_rel"], "<=", "WARN", note=f"plan {clmax_plan:.3f} vs model {model_only:.3f}",
+                 drivers=["/airframe/lifting_surfaces/wing/cl_max"])
     launch = plan["airframe"].get("launch", {})
     if launch.get("method") == "hand" and launch.get("launch_speed"):
-        ctx.gate("stall speed (trimmed) <= hand-launch speed / 1.2 [m/s]", Vs, launch["launch_speed"] / 1.2, "<=", "FAIL", "m/s",
-                 note=f"launch {launch['launch_speed']} m/s", drivers=["/airframe/lifting_surfaces/wing/cl_max", "/components (mass)"])
+        ctx.gate("PESSIMISTIC stall speed (trimmed) <= hand-launch speed / 1.2 [m/s]", Vs_p, launch["launch_speed"] / 1.2, "<=", "FAIL", "m/s",
+                 note=f"launch {launch['launch_speed']} m/s; {vs_note}; 1.2 = team criterion (launch at >= 1.2 Vs)",
+                 drivers=cl_drv + ["/airframe/launch/launch_speed"])
     if env_.get("v_stall_target"):
-        ctx.gate("stall speed vs plan target [m/s]", Vs, env_["v_stall_target"] * 1.05, "<=", "WARN", "m/s")
+        ctx.gate("nominal stall speed vs plan target x 1.05 [m/s]", Vs, env_["v_stall_target"] * 1.05, "<=", "WARN", "m/s",
+                 note=vs_note, drivers=cl_drv)
     sm_deriv = -d["Cma"] / d["CLa"]
     xnp = res["avl_der"].get("x_np")
     sm_avl = (xnp - mass["cg_m"][0]) / c if xnp is not None else None
@@ -115,11 +140,18 @@ def run(ctx):
     for i, (k, t) in enumerate(sorted(ds["alpha_tables"].items(), key=lambda kv: float(kv[0]))):
         al, CL, CD = np.array(t["alpha_deg"]), np.array(t["CL"]), np.array(t["CD"])
         sel = (al >= -8) & (al <= 20)
-        ax[0].plot(al[sel], CL[sel], color=PALETTE[i % 8], label=f"{t['V_mps']:.0f} m/s")
+        ax[0].plot(al[sel], CL[sel], color=PALETTE[i % 8], label=f"model {t['V_mps']:.0f} m/s")
+        if "CL_aerobuildup_raw" in t and abs(t["V_mps"] - vc) < 1e-6:
+            ax[0].plot(al[sel], np.array(t["CL_aerobuildup_raw"])[sel], color=PALETTE[i % 8], lw=0.9, ls=":",
+                       label=f"AeroBuildup raw {t['V_mps']:.0f} m/s")
         ax[1].plot(CD[sel], CL[sel], color=PALETTE[i % 8])
     a = ds["avl_alpha_table"]
-    ax[0].plot(a["alpha_deg"], a["CL"], "o", color=INK2, ms=4, label="AVL (inviscid)")
-    ax[0].set(xlabel="alpha [deg]", ylabel="CL", title="Lift curve (AeroBuildup)")
+    ax[0].plot(a["alpha_deg"], a["CL"], "o", color=INK2, ms=4, label="AVL (anchor)")
+    ax[0].axhline(lm["CLmax_untrimmed_nominal"], color=PALETTE[7], ls="--", lw=1)
+    ax[0].axhline(lm["CLmax_untrimmed_pessimistic"], color=PALETTE[7], ls=":", lw=1)
+    ax[0].text(-7.5, lm["CLmax_untrimmed_nominal"] + 0.02, "CLmax nominal", color=PALETTE[7], fontsize=7.5)
+    ax[0].text(-7.5, lm["CLmax_untrimmed_pessimistic"] - 0.09, "pessimistic", color=PALETTE[7], fontsize=7.5)
+    ax[0].set(xlabel="alpha [deg]", ylabel="CL", title="Lift model (AVL-anchored, CLmax capped)")
     ax[1].set(xlabel="CD", ylabel="CL", title="Drag polar", xlim=(0, 0.15))
     ax[0].legend(loc="lower right")
     br = ds["drag_breakdown_cruise"]["components_CD"]
@@ -140,13 +172,17 @@ def run(ctx):
     if pw:
         fig, ax = plt.subplots(figsize=(6, 3.4))
         ax.plot([p["V"] for p in pw], [p["P_aero_W"] for p in pw], "o-", color=PALETTE[0], label="aerodynamic power D*V")
-        ax.axvline(Vs, color=PALETTE[7], ls=":", lw=1); ax.text(Vs, ax.get_ylim()[1] * 0.92, " Vs", color=PALETTE[7])
+        ax.axvspan(Vs, Vs_p, color=PALETTE[7], alpha=0.12, lw=0)
+        ax.axvline(Vs, color=PALETTE[7], ls=":", lw=1); ax.text(Vs, ax.get_ylim()[1] * 0.92, " Vs nom.", color=PALETTE[7], ha="right")
+        ax.text(Vs_p, ax.get_ylim()[1] * 0.80, " Vs pess.", color=PALETTE[7])
         ax.axvline(vc, color=INK2, ls="--", lw=1); ax.text(vc, ax.get_ylim()[1] * 0.92, " cruise", color=INK2)
         ax.set(xlabel="airspeed [m/s]", ylabel="power [W]", title="Aerodynamic power required (level, ISA SL)")
         save(fig, out / "power_required.png")
         ctx.add_file(out / "power_required.png", "Aerodynamic power required vs airspeed", "figure")
 
-    data = dict(dataset="aero_dataset.json", sim_block="sim_aero_block.json", derivatives=d, V_stall=Vs,
+    data = dict(dataset="aero_dataset.json", sim_block="sim_aero_block.json", derivatives=d, V_stall=Vs, V_stall_pess=Vs_p,
+                lift_model=lm, CLmax_untrimmed=lm["CLmax_untrimmed_nominal"], CLmax_untrimmed_pess=lm["CLmax_untrimmed_pessimistic"],
+                CLmax_trimmed=lm["CLmax_trimmed_nominal"], CLmax_trimmed_pess=lm["CLmax_trimmed_pessimistic"], CLa=d["CLa"],
                 CD0=ds["polar_fit"]["CD0"], e=ds["polar_fit"]["e_eff"], k=ds["polar_fit"]["k"], CL_minD=ds["polar_fit"]["CL_minD"],
                 alpha_cruise_deg=res["a_cruise"], CL_cruise=CLc, LD_cruise=ds["drag_breakdown_cruise"]["CL"] / ds["drag_breakdown_cruise"]["CD_total"],
                 CD_cruise=ds["drag_breakdown_cruise"]["CD_total"], static_margin_avl=sm_avl, static_margin_deriv=sm_deriv, x_np=xnp,
@@ -154,7 +190,9 @@ def run(ctx):
                 modes={k: v for k, v in mo.items() if not k.startswith("A_")}, drag_breakdown=ds["drag_breakdown_cruise"],
                 perf=ds["performance"]["by_speed"], power_required=pw, S=S, b=b, c=c, moment_ref=[g["ref"]["x_cg"], 0, g["zref"]],
                 timings=res["log"])
-    summ = dict(V_stall=round(Vs, 2), CD0=round(data["CD0"], 4), LD_cruise=round(data["LD_cruise"], 1),
+    summ = dict(V_stall_nominal=round(Vs, 2), V_stall_pessimistic=round(Vs_p, 2),
+                CLmax_trimmed_nom_pess=[round(lm["CLmax_trimmed_nominal"], 3), round(lm["CLmax_trimmed_pessimistic"], 3)],
+                CLmax_source=lm["clmax_source"].split(" (")[0], CLa_per_rad=round(d["CLa"], 3), CD0=round(data["CD0"], 4), LD_cruise=round(data["LD_cruise"], 1),
                 static_margin_pct=None if sm_avl is None else round(100 * sm_avl, 1), Cnb=round(d["Cnb"], 4),
                 dutch_roll_zeta=round(dr.get("zeta", float("nan")), 3), spiral=sr)
     return dict(summary=summ, data=data)

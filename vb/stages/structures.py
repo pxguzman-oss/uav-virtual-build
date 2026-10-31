@@ -23,7 +23,10 @@ def run(ctx):
     plan = ctx.plan
     mass = ctx.data("mass")
     prop = ctx.data("propulsion")
-    r = ST.run(plan, ctx.variant, str(ctx.dir), prop=prop, M_auw=mass["mass_kg"])
+    aero = ctx.data("aero_lowfi", required=False)
+    if not aero:
+        ctx.note("aero_lowfi missing: structures falls back to the plan cl_max and a Helmbold lift slope")
+    r = ST.run(plan, ctx.variant, str(ctx.dir), prop=prop, M_auw=mass["mass_kg"], aero=aero)
     for g in r["gates"]:
         ctx.gates.append(dict(g, check=f"{g['stage']}: {g['check']}", stage="structures",
                               drivers=DRIVERS.get(g["stage"], [])))

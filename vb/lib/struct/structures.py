@@ -61,8 +61,9 @@ def tube_props(t, materials):
 
 
 # ---------------------------------------------------------------------------
-def run(plan, variant, out_dir, prop=None, M_auw=None):
-    """plan: variant-resolved plan dict; prop: propulsion-stage data (hover table, cruise rpm); M_auw [kg]."""
+def run(plan, variant, out_dir, prop=None, M_auw=None, aero=None):
+    """plan: variant-resolved plan dict; prop: propulsion-stage data (hover table, cruise rpm); M_auw [kg];
+    aero: aero_lowfi data -> the ONE lift model (trimmed nominal CLmax and CLa) used by every stage (review C1/M2)."""
     results.clear()
     diag = {}
     mats = plan["materials"]
@@ -75,13 +76,21 @@ def run(plan, variant, out_dir, prop=None, M_auw=None):
     b, S, cr, ct = wing["span"], wing["area"], wing["root_chord"], wing["tip_chord"]
     s = b / 2
     AR = b * b / S
-    clmax = bp.val(wing.get("cl_max"), 1.1)
+    if aero and aero.get("CLmax_trimmed"):
+        clmax = float(aero["CLmax_trimmed"])                 # nominal trimmed CLmax of the lift model (aero stage)
+        clmax_src = "aero_lowfi lift model (nominal, trimmed)"
+    else:
+        clmax = bp.val(wing.get("cl_max"), 1.1)
+        clmax_src = "plan wing cl_max (aero stage missing)"
     fos = env.get("fos", 1.5)
     print(f"=== STRUCTURES: {plan['meta']['name']} [{variant or 'base'}]  AUW {M_auw:.3f} kg, "
           f"W/S {W/S:.1f} N/m^2, AR {AR:.1f}, FoS {fos} ===")
 
     # ---------------- 1. load envelope ------------------------------------------
-    a3d = 2 * math.pi * AR / (AR + 2)               # lift-curve slope /rad
+    if aero and aero.get("CLa"):
+        a3d = float(aero["CLa"])                          # lift-curve slope /rad of the lift model (AVL-anchored)
+    else:
+        a3d = 2 * math.pi * AR / (AR + 2)               # Helmbold-type estimate when the aero stage is missing
     mac = (2 / 3) * cr * (1 + ct / cr + (ct / cr) ** 2) / (1 + ct / cr)
     mu = 2 * (W / S) / (RHO * mac * a3d * G)
     Kg = 0.88 * mu / (5.3 + mu)
@@ -108,7 +117,7 @@ def run(plan, variant, out_dir, prop=None, M_auw=None):
         print(f"      {k:36s} n = {v:5.2f}")
     print(f"      belly/hard landing (sink {land.get('sink_rate')} m/s, stroke {land.get('crush_stroke')*1000:.0f} mm): n = {n_land:.1f}")
     n_design = max(cases["manoeuvre n_limit"], cases["gust @VNE (stall-capped)"], cases["gust @Vc (stall-capped)"])
-    diag["vn"] = dict(Vs=Vs, VA=VA, a3d=a3d, Kg=Kg, mu=mu, clmax=clmax, WS=W / S, n_land=n_land, cases=cases,
+    diag["vn"] = dict(Vs=Vs, VA=VA, a3d=a3d, Kg=Kg, mu=mu, clmax=clmax, clmax_source=clmax_src, WS=W / S, n_land=n_land, cases=cases,
                       V=np.linspace(0, env["v_ne"], 60).tolist(), n_stall=[n_stall(v) for v in np.linspace(0, env["v_ne"], 60)],
                       n_gust_c=[n_gust(v, gust.get("at_v_cruise", 7.5)) for v in np.linspace(0, env["v_ne"], 60)],
                       n_gust_ne=[n_gust(v, gust.get("at_v_ne", 5.0)) for v in np.linspace(0, env["v_ne"], 60)])

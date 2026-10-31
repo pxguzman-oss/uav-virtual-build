@@ -79,54 +79,90 @@ def run(ctx):
                            solver_s=r.get("solver_exec_s"), timing=r.get("timing_s"), error=r.get("error")))
         (ctx.dir / "cfd_points.json").write_text(json.dumps(points, indent=1, default=str))
     # ---- like-for-like low-order references --------------------------------------------------
+    # The flight model's LINEAR lift and Cm come from AVL on the full geometry (vb/liftmodel.py), so the
+    # like-for-like "model" reference here is AVL on the SAME configuration as the CFD (wing / wing-body /
+    # wing-body-tail) and the same moment reference. Raw AeroBuildup and ASB VLM are shown for information.
     ap_full = sa.build_asb(g)
     wings = [ap_full.wings[0]] + ([ap_full.wings[1]] if kind == "wingbodytail" else [])
     fus = ap_full.fuselages[:1] if kind in ("wingbody", "wingbodytail") else []
     ap_ = asb.Airplane(name=kind, xyz_ref=ap_full.xyz_ref, wings=wings, fuselages=fus, s_ref=g["ref"]["S"],
                        c_ref=g["ref"]["c"], b_ref=g["ref"]["b"])
-    refs = []
     al_line = np.linspace(min(alphas) - 4, max(alphas) + 4, 13)
-    for al in al_line:
+    avl_exe = env.avl()
+    adir = ctx.dir / "avl_ref"
+    adir.mkdir(exist_ok=True)
+    sa.write_avl(g, str(adir / "cfdcfg.avl"), str(adir / "avl_airfoils"), include_vtail=(kind == "wingbodytail"),
+                 include_body=(kind != "wing"))
+    avl_r, _ = sa.run_avl(avl_exe, str(adir / "cfdcfg.avl"), [round(float(a), 3) for a in al_line], str(adir), tag="ref")
+    refs = []
+    for al, ar in zip(al_line, avl_r):
         r = sa.run_buildup(ap_, g, V, [float(al)])
         v = asb.VortexLatticeMethod(ap_, asb.OperatingPoint(velocity=V, alpha=float(al)), xyz_ref=ap_.xyz_ref,
                                     spanwise_resolution=10, chordwise_resolution=8).run()
         refs.append(dict(alpha=float(al), ab_CL=float(r["CL"][0]), ab_CD=float(r["CD"][0]), ab_Cm=float(r["Cm"][0]),
-                         vlm_CL=float(np.ravel(v["CL"])[0]), vlm_Cm=float(np.ravel(v["Cm"])[0])))
-    # mesh quality (checkMesh): a handful of skew faces at junctions is tolerated
+                         vlm_CL=float(np.ravel(v["CL"])[0]), vlm_Cm=float(np.ravel(v["Cm"])[0]),
+                         model_CL=ar.get("CLtot"), model_Cm=ar.get("Cmtot")))
+    # mesh quality (checkMesh): the real number of failed checks is recorded; a few skew faces at junctions
+    # are tolerated (INFO), anything else is a WARN (review m4)
     import re
     try:
         txt = (case / "log.checkMesh").read_text()
         nfail = int((re.search(r"Failed (\d+) mesh checks", txt) or [0, 0])[1])
         nskew = int((re.search(r"(\d+) highly skew faces", txt) or [0, 0])[1])
         only_skew = nfail == 1 and nskew > 0
-        ctx.gate("checkMesh: failed checks (a few skew faces tolerated)", 0 if (nfail == 0 or (only_skew and nskew <= 50)) else nfail, 0,
-                 "<=", "WARN", note=f"{nfail} failed checks, {nskew} highly skew faces")
+        if nfail == 0:
+            ctx.gate("checkMesh: failed mesh checks", 0, 0, "<=", "WARN", note="mesh OK")
+        elif only_skew and nskew <= 50:
+            ctx.gate("checkMesh: failed mesh checks (only a few highly skew faces: tolerated, not a PASS)", nfail, 0, "info", "INFO",
+                     note=f"{nfail} failed check: {nskew} highly skew faces (wing-body junction)")
+        else:
+            ctx.gate("checkMesh: failed mesh checks", nfail, 0, "<=", "WARN", note=f"{nfail} failed checks, {nskew} highly skew faces")
     except FileNotFoundError:
-        pass
-    # gates
+        ctx.gate("checkMesh log present", False, True, "bool", "WARN", note="log.checkMesh missing")
+    # gates: CFD vs the MODEL actually used by the flight model (AVL lift line on the same configuration)
+    A_ = [r["alpha"] for r in refs]
     for p in points:
         if p["CL"] is None:
             ctx.gate(f"CFD alpha {p['alpha']} completed", False, True, "bool", "WARN", note=p.get("error") or "")
             continue
-        ref_cl = float(np.interp(p["alpha"], [r["alpha"] for r in refs], [r["vlm_CL"] for r in refs]))
-        ref_cm = float(np.interp(p["alpha"], [r["alpha"] for r in refs], [r["vlm_Cm"] for r in refs]))
-        p.update(vlm_CL=ref_cl, vlm_Cm=ref_cm)
+        mcl = float(np.interp(p["alpha"], A_, [r["model_CL"] for r in refs]))
+        mcm = float(np.interp(p["alpha"], A_, [r["model_Cm"] for r in refs]))
+        abcl = float(np.interp(p["alpha"], A_, [r["ab_CL"] for r in refs]))
+        vcl = float(np.interp(p["alpha"], A_, [r["vlm_CL"] for r in refs]))
+        p.update(model_CL=mcl, model_Cm=mcm, ab_CL=abcl, vlm_CL=vcl)
         ctx.gate(f"CFD alpha {p['alpha']}: converged (force oscillation < 0.5 %)", bool(p["converged"]), True, "bool", "WARN",
                  note=f"{p['cells']} cells")
-        if abs(ref_cl) > 0.05:
-            ctx.gate(f"CFD alpha {p['alpha']}: abs(CL_cfd/CL_vlm - 1) (low-order lift check)", abs(p["CL"] / ref_cl - 1), 0.10, "<=", "WARN",
-                     note=f"CFD {p['CL']:.3f} vs VLM {ref_cl:.3f} (fully turbulent RANS loses ~0.06 CL vs free transition)")
-        ctx.gate(f"CFD alpha {p['alpha']}: abs(Cm_cfd - Cm_vlm)", abs(p["Cm"] - ref_cm), 0.03, "<=", "WARN",
-                 note=f"CFD {p['Cm']:.3f} vs VLM {ref_cm:.3f}")
+        if abs(mcl) > 0.05:
+            err = abs(p["CL"] / mcl - 1)
+            ctx.gate(f"CFD alpha {p['alpha']}: abs(CL_cfd / CL_model - 1), model = flight-model lift line on the same {kind}",
+                     err, 0.10, "<=", "FAIL" if err > 0.20 else "WARN",
+                     note=f"CFD {p['CL']:.3f} vs model {mcl:.3f} (raw AeroBuildup {abcl:.3f} = {100*(abcl/p['CL']-1):+.0f} % vs CFD, "
+                          f"ASB VLM {vcl:.3f}); fully turbulent RANS loses some lift vs free transition; >20 % = FAIL",
+                     drivers=["/airframe/lifting_surfaces/wing"])
+        ctx.gate(f"CFD alpha {p['alpha']}: abs(Cm_cfd - Cm_model)", abs(p["Cm"] - mcm), 0.03, "<=", "WARN",
+                 note=f"CFD {p['Cm']:.3f} vs model (AVL) {mcm:.3f}, both about x = {1000*cg[0]:.0f} mm, z = {1000*cg[2]:.0f} mm "
+                      f"(design CG; the flight model uses the mass-stage CG)")
+    okp = [p for p in points if p["CL"] is not None]
+    if len(okp) >= 2:
+        a0, a1 = okp[0], okp[-1]
+        cla_cfd = (a1["CL"] - a0["CL"]) / ((a1["alpha"] - a0["alpha"]) * np.pi / 180)
+        cla_mod = (a1["model_CL"] - a0["model_CL"]) / ((a1["alpha"] - a0["alpha"]) * np.pi / 180)
+        ctx.gate("CFD lift slope / model lift slope: abs(ratio-1)", abs(cla_cfd / cla_mod - 1), 0.15, "<=", "WARN",
+                 note=f"CFD {cla_cfd:.2f} /rad vs model {cla_mod:.2f} /rad ({a0['alpha']}..{a1['alpha']} deg)")
+    else:
+        ctx.gate("CFD lift slope checked (needs >= 2 alphas)", False, True, "bool", "WARN",
+                 note="only one CFD alpha: lift slope not checked")
     # figure
     plt = style()
     fig, ax = plt.subplots(1, 3, figsize=(13, 3.6))
     A = [r["alpha"] for r in refs]
-    ax[0].plot(A, [r["ab_CL"] for r in refs], color=PALETTE[0], label="AeroBuildup")
-    ax[0].plot(A, [r["vlm_CL"] for r in refs], color=PALETTE[1], label="ASB VLM (inviscid)")
+    ax[0].plot(A, [r["ab_CL"] for r in refs], color=PALETTE[0], lw=1, ls="--", label="AeroBuildup raw (not used)")
+    ax[0].plot(A, [r["vlm_CL"] for r in refs], color=PALETTE[1], lw=1, ls=":", label="ASB VLM (inviscid)")
+    ax[0].plot(A, [r["model_CL"] for r in refs], color=PALETTE[2], lw=2, label="flight-model lift line (AVL)")
     ax[1].plot(A, [r["ab_CD"] for r in refs], color=PALETTE[0], label="AeroBuildup")
     ax[2].plot(A, [r["ab_Cm"] for r in refs], color=PALETTE[0], label="AeroBuildup")
-    ax[2].plot(A, [r["vlm_Cm"] for r in refs], color=PALETTE[1], label="ASB VLM")
+    ax[2].plot(A, [r["vlm_Cm"] for r in refs], color=PALETTE[1], lw=1, ls=":", label="ASB VLM")
+    ax[2].plot(A, [r["model_Cm"] for r in refs], color=PALETTE[2], lw=2, label="flight-model Cm line (AVL)")
     ok = [p for p in points if p["CL"] is not None]
     for k, axx in (("CL", ax[0]), ("CD", ax[1]), ("Cm", ax[2])):
         axx.plot([p["alpha"] for p in ok], [p[k] for p in ok], "s", color=PALETTE[7], ms=7, label="OpenFOAM SST")
@@ -134,7 +170,7 @@ def run(ctx):
         axx.legend(loc="best", fontsize=7.5)
     ax[0].set_title(f"CFD vs low order: {kind}, V {V:g} m/s", loc="left")
     ax[1].set_title("CD (RANS fully turbulent: high)", loc="left")
-    ax[2].set_title(f"Cm about x = {1000 * cg[0]:.0f} mm", loc="left")
+    ax[2].set_title(f"Cm about x = {1000 * cg[0]:.0f} mm, z = {1000 * cg[2]:.0f} mm (design CG)", loc="left")
     save(fig, ctx.dir / "cfd_vs_lowfi.png")
     ctx.add_file(ctx.dir / "cfd_vs_lowfi.png", "CFD points vs AeroBuildup/VLM on the same geometry", "figure")
     # tidy: keep logs/results, drop the big processor/mesh directories
@@ -142,7 +178,9 @@ def run(ctx):
         shutil.rmtree(p, ignore_errors=True)
     shutil.rmtree(case / "constant" / "polyMesh", ignore_errors=True)
     data = dict(kind=kind, V=V, points=points, lowfi_ref=refs,
-                cl_ratio_mean=float(np.mean([p["CL"] / p["vlm_CL"] for p in ok if abs(p.get("vlm_CL", 0)) > 0.05])) if ok else None)
+                cl_ratio_mean=float(np.mean([p["CL"] / p["model_CL"] for p in ok if abs(p.get("model_CL", 0)) > 0.05])) if ok else None,
+                cl_ratio_reference="CFD / flight-model lift line (AVL, same configuration)",
+                moment_ref_m=[cg[0], 0.0, cg[2]])
     summ = dict(kind=kind, alphas=alphas, CL=[p["CL"] for p in points], converged=[p["converged"] for p in points],
                 cells=points[0].get("cells") if points else None,
                 wall_min=round(sum((p.get("timing") or {}).get("snappyHexMesh", 0) + (p.get("timing") or {}).get("simpleFoam", 0)

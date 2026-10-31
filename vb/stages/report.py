@@ -419,6 +419,16 @@ def run(ctx):
         + (f"; problems: {'; '.join(problems)}" if problems else ""))
     D.p("Rules: FAIL blocks GO; every WARN needs an owner and a mitigation in the risk register (owners are blank until "
         "the team assigns them, hence CONDITIONAL GO); a stage that errored or did not run makes the result INCOMPLETE/NO-GO.")
+    ad0 = (R.get("aero_lowfi") or {}).get("data") or {}
+    lm0 = ad0.get("lift_model") or {}
+    key_rows = []
+    if lm0:
+        key_rows.append(["stall speed Vs (trimmed, 1 g, ISA SL)", f"nominal {lm0['V_stall_nominal']:.2f} m/s, PESSIMISTIC {lm0['V_stall_pessimistic']:.2f} m/s "
+                         f"(CLmax {lm0['CLmax_trimmed_nominal']:.3f} / {lm0['CLmax_trimmed_pessimistic']:.3f}, -{100*lm0['uncertainty_rel']:.0f} %)",
+                         f"CLmax source: {lm0['clmax_source']}; safety gates use the pessimistic value; F1 stall test retires it"])
+    if key_rows:
+        D.h(2, "Headline numbers (with uncertainty)", "headline")
+        D.table(["quantity", "value", "basis"], key_rows)
     D.h(2, "GO / NO-GO by stage", "gonogo")
     D.table(["stage", "verdict", "FAIL", "WARN", "top issue"], rows, status_col=1)
     fails = [(s, g) for s, g in bad_gates if g["status"] == "FAIL"]
