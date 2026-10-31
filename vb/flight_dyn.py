@@ -6,8 +6,9 @@ import numpy as np
 G = 9.80665
 
 
-def modes(der, mass, Ixx, Iyy, Izz, Ixz, S, b, c, V, rho=1.225, CL=None, CD=None):
-    """der: CLa, CD0/oswald or CD, Cma, Cmq, Cmadot, CYb, CYp, CYr, Clb, Clp, Clr, Cnb, Cnp, Cnr (per rad)."""
+def modes(der, mass, Ixx, Iyy, Izz, Ixz, S, b, c, V, rho=1.225, CL=None, CD=None, thrust=None):
+    """der: CLa, CD0/oswald or CD, Cma, Cmq, Cmadot, CYb, CYp, CYr, Clb, Clp, Clr, Cnb, Cnp, Cnr (per rad).
+    thrust='constant_power': propeller thrust T = P/V adds dT/du = -T/V = -D/V to Xu (review m2)."""
     q = 0.5 * rho * V * V
     m = mass
     CL = CL if CL is not None else m * G / (q * S)
@@ -16,6 +17,8 @@ def modes(der, mass, Ixx, Iyy, Izz, Ixz, S, b, c, V, rho=1.225, CL=None, CD=None
         CD = der.get("CD0", 0.03) + CL * CL / (math.pi * der.get("oswald", 0.8) * AR)
     CDa = 2 * CL * der.get("CLa", 5) / (math.pi * der.get("oswald", 0.8) * AR)
     Xu = -2 * CD * q * S / (m * V)
+    if thrust == "constant_power":
+        Xu += -CD * q * S / (m * V)
     Xw = (CL - CDa) * q * S / (m * V)
     Zu = -2 * CL * q * S / (m * V)
     Zw = -(der["CLa"] + CD) * q * S / (m * V)

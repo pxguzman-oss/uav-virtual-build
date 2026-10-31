@@ -74,6 +74,71 @@ def control_drag(plan, ds, res, g):
     return out
 
 
+def vt_volumes(plan, x_cg, S, b, c):
+    vt = next(s for s in plan["airframe"]["lifting_surfaces"] if s.get("kind") in ("v_tail", "vtail"))
+    Svt = 2 * vt["span"] * (vt["root_chord"] + vt["tip_chord"]) / 2
+    gam = vt.get("dihedral_deg", 35) * DEG
+    lt = vt.get("x_le_root", 0.44) + 0.25 * (vt["root_chord"] + vt["tip_chord"]) / 2 + 0.5 * vt["span"] * math.tan(
+        vt.get("sweep_le_deg", 0) * DEG) - x_cg
+    return Svt * math.cos(gam) ** 2 * lt / (S * c), Svt * math.sin(gam) ** 2 * lt / (S * b)
+
+
+AVL_KEYS = [("CYb", "CYb"), ("Clb", "Clb"), ("Cnb", "Cnb"), ("Clp", "Clp"), ("Cnp", "Cnp"), ("CYp", "CYp"), ("Clr", "Clr"),
+            ("Cnr", "Cnr"), ("CYr", "CYr"), ("Cma", "Cma"), ("Cmq", "Cmq")]
+
+
+def assumption_corners(ctx, plan, mass, d, a_cruise, avl, S, b, c, vc, CLc, CDc):
+    """Review M4: every ASSUMED lifting-surface number (soft input with a range or uncertainty) is moved to both ends
+    of its band; AVL (same method as the nominal lateral/rate derivatives) is re-run at the cruise alpha and the
+    linear modes, static margin and V-tail volumes are re-evaluated. Corners are one-at-a-time (not combined)."""
+    import copy
+    sa = None
+    I = mass["inertia_frd"]
+    rows = []
+    for si in P.soft_inputs(plan):
+        parts = si["path"].split("/")
+        if len(parts) != 5 or parts[1] != "airframe" or parts[2] != "lifting_surfaces" or parts[4] in ("cl_max", "spars"):
+            continue
+        surf, key, v = parts[3], parts[4], float(si["value"])
+        if si.get("range"):
+            corners = list(si["range"])
+        elif si.get("uncertainty"):
+            corners = [v * (1 - si["uncertainty"]), v * (1 + si["uncertainty"])]
+        else:
+            continue
+        for tag, cv in zip(("lo", "hi"), corners):
+            pl = copy.deepcopy(plan)
+            ls = next(x for x in pl["airframe"]["lifting_surfaces"] if x["name"] == surf)
+            ls[key] = cv
+            if surf == P.main_wing(plan)["name"] and key in ("span", "root_chord", "tip_chord"):
+                ls["area"] = (ls["root_chord"] + ls["tip_chord"]) / 2 * ls["span"]
+            g2, sa = geom2aero.build(pl, mass["cg_m"], mass["mass_kg"])
+            wd = ctx.dir / "corners" / f"{surf}_{key}_{tag}"
+            wd.mkdir(parents=True, exist_ok=True)
+            sa.write_avl(g2, str(wd / "c.avl"), str(wd / "af"))
+            try:
+                r2, _ = sa.run_avl(avl, str(wd / "c.avl"), [round(a_cruise, 2)], str(wd), tag="c")
+                ac = r2[0]
+            except Exception as e:
+                ctx.note(f"corner {si['path']}={cv}: AVL failed {e}")
+                continue
+            d2 = dict(d)
+            for ka, kd in AVL_KEYS:
+                if ka in ac:
+                    d2[kd] = ac[ka]
+            mo = modes(dict(d2, CD0=d2["CD0"], oswald=d2["oswald"]), mass["mass_kg"], I["Ixx"], I["Iyy"], I["Izz"], I.get("Ixz", 0.0),
+                       S, b, c, vc, CL=CLc, CD=CDc, thrust="constant_power")
+            sr = mo.get("spiral", {})
+            xnp = ac.get("Xnp")
+            Vh2, Vv2 = vt_volumes(pl, mass["cg_m"][0], S, b, c)
+            rows.append(dict(param=si["path"], nominal=v, corner=cv, tag=tag,
+                             spiral_T2_s=sr.get("time_to_double_s") if sr and not sr.get("stable") else None,
+                             spiral_stable=bool(sr.get("stable")) if sr else None,
+                             dutch_zeta=mo.get("dutch_roll", {}).get("zeta"), Clb=d2["Clb"], Cnb=d2["Cnb"],
+                             sm_pct=None if xnp is None else 100 * (xnp - mass["cg_m"][0]) / c, Vh=Vh2, Vv=Vv2))
+    return rows
+
+
 def run(ctx):
     plan = ctx.plan
     mass = ctx.data("mass")
@@ -143,7 +208,8 @@ def run(ctx):
     ctx.gate("static margin (AVL neutral point vs CG) [% MAC]", None if sm_avl is None else 100 * sm_avl, [100 * lo, 100 * hi], "range",
              "WARN", "%", note=f"from Cma/CLa: {100*sm_deriv:.1f} %", drivers=["/components (CG)", "/airframe/lifting_surfaces/vtail"])
     ctx.gate("Cn_beta > 0 (weathercock stability)", d["Cnb"], 0.0, ">=", "FAIL", "/rad", drivers=["/airframe/lifting_surfaces/vtail"])
-    ctx.gate("Cl_beta < 0 (dihedral effect)", d["Clb"], 0.0, "<=", "FAIL", "/rad")
+    ctx.gate("Cl_beta < 0 (dihedral effect)", d["Clb"], 0.0, "<=", "FAIL", "/rad",
+             drivers=["/airframe/lifting_surfaces/wing/dihedral_deg", "/airframe/lifting_surfaces/wing/z_le_root", "/airframe/lifting_surfaces/vtail"])
     # trim + authority
     surf = {s["name"]: s["derivatives_per_rad"] for s in ds["surfaces"]}
     rv = [s for s in ds["surfaces"] if s["kind"] == "ruddervator"]
@@ -166,28 +232,50 @@ def run(ctx):
     pb2v = Cl_da * a_max * DEG / abs(d["Clp"]) if d["Clp"] else None
     ctx.gate("roll authority pb/2V at full aileron", pb2v, 0.07, ">=", "WARN", note="MIL-F-8785C class I level 1 >= 0.07")
     # V-tail volume coefficients (projected)
-    vt = next(s for s in plan["airframe"]["lifting_surfaces"] if s.get("kind") in ("v_tail", "vtail"))
-    Svt = 2 * vt["span"] * (vt["root_chord"] + vt["tip_chord"]) / 2
-    gam = vt.get("dihedral_deg", 35) * DEG
-    lt = vt.get("x_le_root", 0.44) + 0.25 * (vt["root_chord"] + vt["tip_chord"]) / 2 + 0.5 * vt["span"] * math.tan(
-        vt.get("sweep_le_deg", 0) * DEG) - mass["cg_m"][0]
-    Vh = Svt * math.cos(gam) ** 2 * lt / (S * c)
-    Vv = Svt * math.sin(gam) ** 2 * lt / (S * b)
+    Vh, Vv = vt_volumes(plan, mass["cg_m"][0], S, b, c)
     ctx.gate("V-tail horizontal volume coefficient (projected)", Vh, 0.30, ">=", "WARN", drivers=["/airframe/lifting_surfaces/vtail"])
     ctx.gate("V-tail vertical volume coefficient (projected)", Vv, 0.020, ">=", "WARN", drivers=["/airframe/lifting_surfaces/vtail"])
     # linear modes at cruise
     I = mass["inertia_frd"]
-    mo = modes(dict(d, CD0=d["CD0"], oswald=d["oswald"]), m, I["Ixx"], I["Iyy"], I["Izz"], I.get("Ixz", 0.0), S, b, c, vc)
+    # trim CL/CD of the cruise table (review m2: the fitted polar's CL_minD offset is kept)
+    CDc = float(np.interp(CLc, np.array(ds["alpha_tables"][str(vc)]["CL"])[(np.array(ds["alpha_tables"][str(vc)]["alpha_deg"]) > -4) & (np.array(ds["alpha_tables"][str(vc)]["alpha_deg"]) < 10)],
+                          np.array(ds["alpha_tables"][str(vc)]["CD"])[(np.array(ds["alpha_tables"][str(vc)]["alpha_deg"]) > -4) & (np.array(ds["alpha_tables"][str(vc)]["alpha_deg"]) < 10)]))
+    mo = modes(dict(d, CD0=d["CD0"], oswald=d["oswald"]), m, I["Ixx"], I["Iyy"], I["Izz"], I.get("Ixz", 0.0), S, b, c, vc,
+               CL=CLc, CD=CDc, thrust="constant_power")
     sp, ph, dr, sr, rl = (mo.get(k, {}) for k in ("short_period", "phugoid", "dutch_roll", "spiral", "roll"))
+    lat_drv = ["/airframe/lifting_surfaces/wing/dihedral_deg", "/airframe/lifting_surfaces/wing/z_le_root", "/airframe/lifting_surfaces/vtail"]
     ctx.gate("short-period damping ratio", sp.get("zeta"), 0.35, ">=", "WARN")
     ctx.gate("Dutch-roll damping ratio", dr.get("zeta"), 0.08, ">=", "WARN" if dr.get("zeta", 0) > 0 else "FAIL",
-             note=f"wn {dr.get('wn', 0):.2f} rad/s", drivers=["/airframe/lifting_surfaces/vtail"])
+             note=f"wn {dr.get('wn', 0):.2f} rad/s", drivers=lat_drv)
     if sr:
         if sr["stable"]:
-            ctx.gate("spiral mode", True, True, "bool", "WARN", note=f"stable, time to half {sr.get('time_to_half_s', 0):.0f} s")
+            ctx.gate("spiral mode", True, True, "bool", "WARN", note=f"stable, time to half {sr.get('time_to_half_s', 0):.0f} s",
+                     drivers=lat_drv)
         else:
             ctx.gate("spiral mode time to double [s] (autopilot copes if >= 12 s)", sr["time_to_double_s"], 12.0, ">=",
-                     "WARN" if sr["time_to_double_s"] >= 4 else "FAIL", "s")
+                     "WARN" if sr["time_to_double_s"] >= 4 else "FAIL", "s", drivers=lat_drv)
+    # ---- assumption corner cases (review M4) -----------------------------------------------------
+    corners = assumption_corners(ctx, plan, mass, d, res["a_cruise"], avl, S, b, c, vc, CLc, CDc)
+    if corners:
+        def t2(r):
+            return 1e9 if r["spiral_stable"] else (r["spiral_T2_s"] or 1e9)
+        wsp = min(corners, key=t2)
+        ctx.gate("spiral time to double at the WORST assumption corner [s] (one-at-a-time)", None if t2(wsp) >= 1e9 else t2(wsp), 12.0, ">=",
+                 "WARN", "s", note=f"{wsp['param']} = {wsp['corner']:g} (nominal {wsp['nominal']:g})", drivers=[wsp["param"]])
+        wdr = min(corners, key=lambda r: r["dutch_zeta"] or 9)
+        ctx.gate("Dutch-roll damping at the worst assumption corner", wdr["dutch_zeta"], 0.08, ">=", "WARN",
+                 note=f"{wdr['param']} = {wdr['corner']:g}", drivers=[wdr["param"]])
+        smc = [r for r in corners if r["sm_pct"] is not None]
+        if smc:
+            lo_sm, hi_sm = min(smc, key=lambda r: r["sm_pct"]), max(smc, key=lambda r: r["sm_pct"])
+            ctx.gate("static margin range over the assumption corners [% MAC]", [round(lo_sm["sm_pct"], 1), round(hi_sm["sm_pct"], 1)],
+                     None, "info", "INFO", note=f"min at {lo_sm['param']}={lo_sm['corner']:g}, max at {hi_sm['param']}={hi_sm['corner']:g}")
+            ok_lo = 100 * lo >= 0 and lo_sm["sm_pct"] >= 100 * lo and hi_sm["sm_pct"] <= 100 * hi
+            ctx.gate("static margin stays in range at every assumption corner", ok_lo, True, "bool", "WARN",
+                     note=f"{lo_sm['sm_pct']:.1f}..{hi_sm['sm_pct']:.1f} % vs [{100*lo:.0f}, {100*hi:.0f}] %", drivers=[lo_sm["param"], hi_sm["param"]])
+        wvv = min(corners, key=lambda r: r["Vv"])
+        ctx.gate("V-tail vertical volume at the worst assumption corner", wvv["Vv"], 0.020, ">=", "WARN",
+                 note=f"{wvv['param']} = {wvv['corner']:g}", drivers=[wvv["param"]])
     if rl:
         ctx.gate("roll-mode time constant [s]", rl.get("tau_s"), 1.0, "<=", "WARN", "s")
     if ph:
@@ -247,6 +335,7 @@ def run(ctx):
                 CD_cruise=ds["drag_breakdown_cruise"]["CD_total"], static_margin_avl=sm_avl, static_margin_deriv=sm_deriv, x_np=xnp,
                 Cm_de=Cm_de, Cn_dr=Cn_dr, Cl_da=Cl_da, pb2V=pb2v, Vh=Vh, Vv=Vv, trim_cruise_deg=de_c,
                 modes={k: v for k, v in mo.items() if not k.startswith("A_")}, drag_breakdown=ds["drag_breakdown_cruise"],
+                assumption_corners=corners,
                 perf=ds["performance"]["by_speed"], power_required=pw, S=S, b=b, c=c, moment_ref=[g["ref"]["x_cg"], 0, g["zref"]],
                 timings=res["log"])
     summ = dict(V_stall_nominal=round(Vs, 2), V_stall_pessimistic=round(Vs_p, 2),

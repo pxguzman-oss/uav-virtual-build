@@ -42,6 +42,8 @@ $defs:
           value: {type: number}
           source: {type: string}
           uncertainty: {type: number, minimum: 0, description: "+/- fraction, 0.1 = 10 %"}
+          range: {type: array, items: {type: number}, minItems: 2, maxItems: 2,
+                  description: "plausible [low, high] (use for angles/positions where a fraction is meaningless); corner cases are run on it"}
         additionalProperties: false
   tube:
     type: object
@@ -86,20 +88,20 @@ $defs:
       name: {type: string}
       kind: {enum: [wing, htail, vtail, v_tail, canard, fin], default: wing}
       symmetric: {type: boolean, default: true}
-      span: {type: number, description: "tip-to-tip (symmetric) or root-to-tip [m]"}
-      area: {type: number}
-      root_chord: {type: number}
-      tip_chord: {type: number}
-      sweep_le_deg: {type: number, default: 0}
-      sweep_c4_deg: {type: number, description: "quarter-chord sweep (alternative to sweep_le_deg)"}
+      span: {$ref: "#/$defs/sourced_number"}
+      area: {$ref: "#/$defs/sourced_number"}
+      root_chord: {$ref: "#/$defs/sourced_number"}
+      tip_chord: {$ref: "#/$defs/sourced_number"}
+      sweep_le_deg: {$ref: "#/$defs/sourced_number"}
+      sweep_c4_deg: {$ref: "#/$defs/sourced_number"}
       sections_per_side: {type: integer, default: 8, description: "geometry loft sections per panel"}
-      dihedral_deg: {type: number, default: 0}
-      twist_tip_deg: {type: number, default: 0}
-      incidence_deg: {type: number, default: 0}
-      x_le_root: {type: number, default: 0}
-      z_le_root: {type: number, default: 0}
+      dihedral_deg: {$ref: "#/$defs/sourced_number"}
+      twist_tip_deg: {$ref: "#/$defs/sourced_number"}
+      incidence_deg: {$ref: "#/$defs/sourced_number"}
+      x_le_root: {$ref: "#/$defs/sourced_number"}
+      z_le_root: {$ref: "#/$defs/sourced_number"}
       airfoil: {type: string, description: "name or path to .dat (Selig format)"}
-      thickness_ratio: {type: number}
+      thickness_ratio: {$ref: "#/$defs/sourced_number"}
       cl_max: {$ref: "#/$defs/sourced_number"}
       skin: {$ref: "#/$defs/printed_skin"}
       spars: {type: array, items: {$ref: "#/$defs/spar_segment"}}
@@ -125,6 +127,7 @@ $defs:
     additionalProperties: false
 
 properties:
+  _sourced: {type: object, description: "INTERNAL: provenance of sourced numbers unwrapped by the loader (vb/plan.py)"}
   meta:
     type: object
     required: [name, revision, phase]
@@ -185,7 +188,7 @@ properties:
           crush_stroke: {type: number, description: "effective stopping distance [m]"}}}
       launch: {type: object, properties: {
           method: {enum: [hand, bungee, catapult, vtol, runway]},
-          launch_speed: {type: number}, launch_load_factor: {type: number}}}
+          launch_speed: {$ref: "#/$defs/sourced_number"}, launch_load_factor: {type: number}}}
       cad_files: {type: array, items: {type: string}}
       cad_import:
         type: object
@@ -333,7 +336,7 @@ properties:
       n_limit_pos: {type: number, description: "limit load factor (positive), ultimate = n * fos"}
       n_limit_neg: {type: number}
       fos: {type: number, default: 1.5}
-      gust_u_de: {type: object, properties: {at_v_cruise: {type: number}, at_v_ne: {type: number}}}
+      gust_u_de: {type: object, properties: {at_v_cruise: {$ref: "#/$defs/sourced_number"}, at_v_ne: {$ref: "#/$defs/sourced_number"}}}
       max_bank_deg: {type: number}
 
   environment_cases:
@@ -345,7 +348,7 @@ properties:
         name: {type: string}
         altitude_msl: {type: number}
         temperature_C: {type: number}
-        solar_heating_dT_C: {type: number, description: "skin temperature rise above ambient in sun"}
+        solar_heating_dT_C: {$ref: "#/$defs/sourced_number", description: "skin temperature rise above ambient in sun"}
         wind_mean: {type: number}
         wind_gust: {type: number}
         turbulence: {enum: [none, light, moderate, severe]}

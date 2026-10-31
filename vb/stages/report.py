@@ -354,6 +354,12 @@ def run(ctx):
             return "C4 proof load / tap test"
         if "cl_max" in p:
             return "F1 stall test"
+        if "lifting_surfaces" in p:
+            return "measure the printed parts / CAD (cad_import)"
+        if "launch_speed" in p:
+            return "phone-video throw speed"
+        if "gust" in p or "solar" in p or "uncertainty" in p:
+            return "team decision / sensitivity"
         return "measure / confirm from CAD"
 
     # ---- calibration: predicted vs measured --------------------------------------------------------
@@ -524,9 +530,18 @@ def run(ctx):
                 [[s, g["check"], fmt(g["value"]), fmt(g["limit"]), f"{100*g['margin']:.1f} %"] for s, g in marg])
     D.h(2, "Soft inputs (estimates) - measure these first", "soft")
     D.p(f"{len(soft)} soft inputs in the plan. Ranked by the number of non-PASS gates they drive (FAIL counts double), then by stated uncertainty.")
-    D.table(["#", "plan path", "value", "source", "+-", "drives non-PASS gates", "measure"],
-            [[i + 1, r["path"], fmt(r["value"]), r["source"][:70], fmt(r.get("uncertainty")), len(r["hits"]),
-              measure_hint(r["path"])] for i, r in enumerate(ranked[:25])])
+    D.table(["#", "plan path", "value", "source", "+- / range", "drives non-PASS gates", "measure"],
+            [[i + 1, r["path"], fmt(r["value"]), r["source"][:90],
+              (f"[{fmt(r['range'][0])}, {fmt(r['range'][1])}]" if r.get("range") else fmt(r.get("uncertainty"))), len(r["hits"]),
+              measure_hint(r["path"])] for i, r in enumerate(ranked[:30])])
+    ac_ = ((R.get("aero_lowfi") or {}).get("data") or {}).get("assumption_corners") or []
+    if ac_:
+        D.p("Assumption corner cases (each assumed lifting-surface number moved to the ends of its band, one at a time; AVL at the "
+            "cruise alpha; see the aero section gates):")
+        D.table(["assumption", "nominal", "corner", "spiral T2 s", "Dutch-roll zeta", "static margin %", "Vv"],
+                [[r["param"].replace("/airframe/lifting_surfaces/", ""), fmt(r["nominal"]), fmt(r["corner"]),
+                  "stable" if r.get("spiral_stable") else fmt(r.get("spiral_T2_s")), fmt(r.get("dutch_zeta")), fmt(r.get("sm_pct")),
+                  fmt(r.get("Vv"))] for r in ac_])
     uns = (R.get("ingest") or {}).get("data", {}).get("unsourced_masses", [])
     if uns:
         D.p("Masses given as plain numbers (no source string, treated as known): " + ", ".join(uns))

@@ -20,7 +20,7 @@ STAGES = [
          keys=["/components", "/airframe", "/propulsion/units", "/gates"], code=["vb/stages/clash.py", "vb/lib/geom/fit_check.py"]),
     dict(name="aero_lowfi", deps=["geometry", "mass"], soft=[], cheap=False, fid=False, timeout=1800,
          keys=["/airframe", "/envelope", "/analysis/aero", "/analysis/static_margin_range", "/propulsion/units"],
-         code=["vb/stages/aero_lowfi.py", "vb/adapters/geom2aero.py", "vb/lib/aero/stork_aero.py", "vb/liftmodel.py"]),
+         code=["vb/stages/aero_lowfi.py", "vb/adapters/geom2aero.py", "vb/lib/aero/stork_aero.py", "vb/liftmodel.py", "vb/flight_dyn.py", "vb/plan.py"]),
     dict(name="propulsion", deps=["mass"], soft=["aero_lowfi"], cheap=True, fid=False, timeout=600,
          keys=["/propulsion", "/energy", "/envelope", "/environment_cases", "/missions", "/analysis", "/gates"],
          code=["vb/stages/propulsion.py", "vb/lib/struct/propulsion.py", "data/props"]),

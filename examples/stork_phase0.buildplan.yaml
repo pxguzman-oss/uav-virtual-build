@@ -34,11 +34,11 @@ airframe:
       area: 0.31                      # manual (31 dm2)
       root_chord: 0.230               # manual
       tip_chord: 0.1527               # from S = (cr+ct)/2*b ; MAC 194 mm (manual 195)
-      sweep_c4_deg: 0.0               # assumed: straight quarter-chord line
-      dihedral_deg: 0.0               # straight 1000 mm spars through the centre section -> flat inner wing
-      twist_tip_deg: -1.5             # assumed washout
+      sweep_c4_deg: {value: 0.0, source: "assumption: straight quarter-chord line (manual gives no sweep)", range: [-2.0, 2.0]}
+      dihedral_deg: {value: 0.0, source: "assumption: flat centre section (straight 1000 mm spars); struct prototype estimated 2 deg", range: [0.0, 2.0]}
+      twist_tip_deg: {value: -1.5, source: "assumption: washout (not in the manual)", range: [-3.0, 0.0]}
       x_le_root: 0.0
-      z_le_root: 0.022                # assumed: shoulder wing on the ~100 mm fuselage
+      z_le_root: {value: 0.022, source: "assumption: shoulder wing on the ~100 mm fuselage", range: [0.0, 0.035]}
       sections_per_side: 8
       airfoil: S3021
       thickness_ratio: 0.095
@@ -53,13 +53,13 @@ airframe:
            max_defl_deg: 22, horn_arm: 0.012, servo_arm: 0.010, servo: servo_aileron}
     - name: vtail
       kind: v_tail
-      span: 0.300                     # per panel, along the panel (assumed; 6x265 tube inside)
-      root_chord: 0.150               # assumed
-      tip_chord: 0.095                # assumed
-      sweep_le_deg: 20                # assumed
-      dihedral_deg: 35                # assumed (110 deg included angle)
-      x_le_root: 0.440                # assumed
-      z_le_root: 0.014
+      span: {value: 0.300, source: "assumption: per panel along the panel (struct prototype had 0.265; 6x265 tube inside)", uncertainty: 0.10}
+      root_chord: {value: 0.150, source: "assumption (not in the manual)", uncertainty: 0.10}
+      tip_chord: {value: 0.095, source: "assumption (not in the manual)", uncertainty: 0.10}
+      sweep_le_deg: {value: 20, source: "assumption (renders)", range: [10, 30]}
+      dihedral_deg: {value: 35, source: "assumption: 110 deg included angle", range: [30, 40]}
+      x_le_root: {value: 0.440, source: "assumption (struct prototype had 0.46)", range: [0.42, 0.46]}
+      z_le_root: {value: 0.014, source: "assumption", range: [0.0, 0.03]}
       sections_per_side: 4
       airfoil: NACA0009
       thickness_ratio: 0.09
@@ -94,7 +94,7 @@ airframe:
       battery_bay:     {center: [-0.150, 0.0, -0.002], size: [0.220, 0.070, 0.078]}   # manual: 220 x 65-80 x 80
       electronics_bay: {center: [ 0.065, 0.0,  0.000], size: [0.205, 0.065, 0.080]}
   landing: {method: belly, sink_rate: 1.5, crush_stroke: 0.010}
-  launch: {method: hand, launch_speed: 11.0, launch_load_factor: 3.0}
+  launch: {method: hand, launch_speed: {value: 11.0, source: "estimate: trained overhand throw (measure with phone video)", uncertainty: 0.10}, launch_load_factor: 3.0}
 
 materials:
   cf_pultruded:
@@ -214,12 +214,18 @@ envelope:
   n_limit_pos: 4.0
   n_limit_neg: -1.5
   fos: 1.5
-  gust_u_de: {at_v_cruise: 7.5, at_v_ne: 5.0}
+  # gust velocities: TEAM VALUES for a small UAS flown below 120 m in light/moderate turbulence. For comparison
+  # CS-VLA 333(c) (very light aeroplanes) uses 15.24 m/s at VC and 7.62 m/s at VD; the structures stage also
+  # reports the load factors at those values (sensitivity).
+  gust_u_de: {at_v_cruise: {value: 7.5, source: "assumption (team value; CS-VLA 333(c) uses 15.24 m/s at VC)", uncertainty: 0.5},
+              at_v_ne: {value: 5.0, source: "assumption (team value; CS-VLA 333(c) uses 7.62 m/s at VD)", uncertainty: 0.5}}
   max_bank_deg: 45
 
 environment_cases:
-  - {name: std_day,  altitude_msl: 0,   temperature_C: 15, solar_heating_dT_C: 10, wind_mean: 4, wind_gust: 8, turbulence: light}
-  - {name: hot_valley_summer, altitude_msl: 50, temperature_C: 42, solar_heating_dT_C: 20, wind_mean: 6, wind_gust: 11, turbulence: moderate}
+  - {name: std_day,  altitude_msl: 0,   temperature_C: 15, solar_heating_dT_C: {value: 10, source: "assumption: skin in sun, light airflow", range: [5, 20]}, wind_mean: 4, wind_gust: 8, turbulence: light}
+  # solar dT 20 C: GROUND SOAK (parked/transported in sun, no airflow) - the real Tg risk; in flight convection keeps
+  # the skin nearer ambient. Dark matte skins in full sun can exceed +20 C (range).
+  - {name: hot_valley_summer, altitude_msl: 50, temperature_C: 42, solar_heating_dT_C: {value: 20, source: "assumption: dark printed skin parked in full sun (ground soak, not in flight)", range: [10, 30]}, wind_mean: 6, wind_gust: 11, turbulence: moderate}
   - {name: cold_morning, altitude_msl: 0, temperature_C: 2, solar_heating_dT_C: 0, wind_mean: 3, wind_gust: 6, turbulence: light}
 
 missions:

@@ -72,6 +72,37 @@ def load_raw(path):
     return yaml.safe_load(Path(path).read_text())
 
 
+# Geometry/envelope numbers that consumers read as plain floats. A plan may give them as sourced numbers
+# {value, source, uncertainty|range}; the loader replaces them by the value and keeps the provenance in
+# plan["_sourced"][path] so they appear in the soft-input table (review M4).
+UNWRAP_KEYS = {"span", "area", "root_chord", "tip_chord", "sweep_le_deg", "sweep_c4_deg", "dihedral_deg", "twist_tip_deg",
+               "incidence_deg", "x_le_root", "z_le_root", "thickness_ratio", "at_v_cruise", "at_v_ne", "solar_heating_dT_C",
+               "launch_speed"}
+
+
+def unwrap(plan):
+    src = dict(plan.get("_sourced") or {})
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for k, v in list(node.items()):
+                if k == "_sourced":
+                    continue
+                p = f"{path}/{k}"
+                if k in UNWRAP_KEYS and isinstance(v, dict) and "value" in v:
+                    src[p] = dict(v)
+                    node[k] = v["value"]          # keep the YAML number type (cache keys stay identical)
+                else:
+                    walk(v, p)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                nm = v.get("name") if isinstance(v, dict) else None
+                walk(v, f"{path}/{nm if nm else i}")
+    walk(plan, "")
+    plan["_sourced"] = src
+    return plan
+
+
 def resolve(raw, variant=None):
     plan = copy.deepcopy(raw)
     if variant:
@@ -83,7 +114,7 @@ def resolve(raw, variant=None):
     else:
         plan = {k: v for k, v in plan.items() if k != "variants"}
         plan["meta"]["variant"] = "base"
-    return plan
+    return unwrap(plan)
 
 
 def apply_calibration(plan, cal_path):
@@ -92,7 +123,7 @@ def apply_calibration(plan, cal_path):
     plan = _merge(plan, cal.get("overrides") or {})
     plan["calibration"] = dict(file=str(cal_path), date=str(cal.get("date", "")), measured=cal.get("measured") or {},
                                notes=cal.get("notes", ""))
-    return plan
+    return unwrap(plan)
 
 
 def load(path, variant=None, validate_schema=True, calibration=None):
@@ -152,15 +183,15 @@ def soft_inputs(plan):
         if isinstance(node, dict):
             if "value" in node and isinstance(node.get("value"), (int, float)):
                 src = str(node.get("source", ""))
-                if SOFT_WORDS.search(src) or node.get("uncertainty") or not src:
+                if SOFT_WORDS.search(src) or node.get("uncertainty") or node.get("range") or not src:
                     out.append(dict(path=path, value=node["value"], source=src or "(no source)",
-                                    uncertainty=node.get("uncertainty")))
+                                    uncertainty=node.get("uncertainty"), range=node.get("range")))
                 return
             src = node.get("source")
             if isinstance(src, str) and SOFT_WORDS.search(src) and "name" in node:
                 out.append(dict(path=path, value=None, source=src, uncertainty=None))
             for k, v in node.items():
-                if k in ("variants", "meta", "references"):
+                if k in ("variants", "meta", "references", "_sourced"):
                     continue
                 walk(v, f"{path}/{k}")
         elif isinstance(node, list):
@@ -168,6 +199,8 @@ def soft_inputs(plan):
                 nm = v.get("name") if isinstance(v, dict) else None
                 walk(v, f"{path}/{nm if nm else i}")
     walk(plan, "")
+    for p, node in (plan.get("_sourced") or {}).items():
+        walk(node, p)
     return out
 
 
