@@ -133,7 +133,8 @@ class Ctx:
         mg = margin_of(value, limit, kind)
         if mg is not None:
             g["margin"] = mg
-            if st == "PASS" and mg < MARGINAL:
+            # count-type checks (e.g. "0 errors <= 0") have no meaningful margin
+            if st == "PASS" and mg < MARGINAL and not (limit == 0 and value == 0):
                 g["marginal"] = True
         self.gates.append(clean(g))
         v = f"{value:.4g}" if isinstance(value, (int, float)) and not isinstance(value, bool) else str(value)

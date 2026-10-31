@@ -527,7 +527,8 @@ def run(ctx):
         D.table(["stage", "check", "value", "limit", "suggested change"],
                 [[s, g["check"], fmt(g["value"]), fmt(g["limit"]), mitigation(g["check"])] for s, g in fails])
 
-    marg = [(s, g) for s in R if R[s] for g in R[s].get("gates", []) if g.get("marginal")]
+    marg = [(s, g) for s in R if R[s] for g in R[s].get("gates", []) if g.get("marginal")
+            and not (isinstance(g.get("value"), int) and isinstance(g.get("limit"), int))]  # count checks have no margin
     if marg:
         D.h(3, "Marginal passes (within 5 % of the limit) - treat as open risks")
         D.table(["stage", "check", "value", "limit", "margin"],
