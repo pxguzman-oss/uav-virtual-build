@@ -37,3 +37,4 @@ figure review, REVIEW_RESPONSE.txt. Scratch test dir /tmp/vbt (copy of out/), ne
      9.72 m/s (CLmax trimmed 1.046 / 0.942, Raymer cap 0.9 x NeuralFoil 1.243). Launch gate (pessimistic)
      FAILs 9.72 > 11/1.2; AIRSPEED_MIN 11 (plan override) / Vs_pess = 1.13 < 1.2 FAILs. Plan left as is (real finding).
      CFD standard alphas now [2, 7] (CFD cache invalid -> ~12 min CFD on next standard run).
+[R2] C2 committed: SITL standard = calm + mission env (wind 4 from 270, gusts 1-cos 4 m/s/20 s, Dryden light W20 8) for mission, launch nominal + pessimistic-CLmax launch, fs_rc; home alt = env alt (0 m), temp = env temp. Windy pess launch survives (min CAS 1.11 Vs_pess).
