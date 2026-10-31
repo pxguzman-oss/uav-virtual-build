@@ -84,15 +84,16 @@ def cap_table(alpha_deg, CL, clmax_target, knee_frac=0.75):
 
 
 def monotone_post_stall_cm(alpha_deg, Cm, alpha_stall_deg, a_end=30.0):
-    """No pitch-UP after the stall: Cm(alpha) is made non-increasing between alpha_stall and a_end.
+    """No pitch-UP near/after the stall: Cm(alpha) is made non-increasing between alpha_stall - 4 deg and a_end.
     AeroBuildup has no change of wing->tail downwash at the stall and NeuralFoil is not trustworthy past
     Clmax, so its post-stall Cm bump is treated as an artefact (review M3). The real post-stall pitch
     behaviour is UNKNOWN until the F1 stall test."""
     a = np.asarray(alpha_deg, float)
     cm = np.array(Cm, float)
     prev, n_changed, max_bump = None, 0, 0.0
+    a_from = alpha_stall_deg - 4.0          # the AeroBuildup bump starts ~2 deg before the CL peak
     for i in np.argsort(a):
-        if a[i] <= alpha_stall_deg:
+        if a[i] <= a_from:
             prev = cm[i]
             continue
         if a[i] > a_end:

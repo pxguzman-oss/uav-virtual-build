@@ -117,7 +117,7 @@ def plot_timeseries(run, tr, events, title, fname="timeseries.png", t0=None, t1=
     ax[1].plot(d.t, gs, color=C[1], label="ground speed", lw=1.0)
     ax[1].set_ylabel("speed [m/s]"); ax[1].legend(loc="upper right")
     ax[2].plot(d.t, d.phi_deg, color=C[0], label="roll"); ax[2].plot(d.t, d.theta_deg, color=C[1], label="pitch")
-    ax[2].plot(d.t, d.alpha_deg, color=C[2], label="alpha", lw=1.0)
+    ax[2].plot(d.t, d.alpha_deg.where(d.V_tas > 3.0), color=C[2], label="alpha (V > 3 m/s)", lw=1.0)
     ax[2].set_ylabel("angle [deg]"); ax[2].legend(loc="upper right", ncol=3)
     ax[3].plot(d.t, d.throttle * 100, color=C[0]); ax[3].set_ylabel("throttle [%]")
     ax[4].plot(d.t, d.P_elec_W, color=C[0]); ax[4].set_ylabel("battery power [W]"); ax[4].set_xlabel("sim time [s]")
@@ -139,6 +139,15 @@ def analyze_mission(run, meta, tr, df, events):
     if t0 is None or t1 is None:
         return {"error": "course not completed"}
     seg = tr[(tr.t >= t0) & (tr.t <= t1)]
+    xt0, _, _ = course.cross_track(cl, seg.N.values, seg.E.values)
+    # tracking metrics start once the aircraft has joined the course (first |XT| < 5 m): the entry from the climb
+    # loiter is reported separately, it is not path-tracking performance
+    on = np.where(xt0 < 5.0)[0]
+    j0 = int(on[0]) if len(on) else 0
+    res["course_entry_s"] = round(float(seg.t.iloc[j0] - seg.t.iloc[0]), 1)
+    res["course_entry_xt_max_m"] = round(float(xt0[:j0 + 1].max()), 1)
+    t0 = float(seg.t.iloc[j0])
+    seg = seg.iloc[j0:]
     xt, R, idx = course.cross_track(cl, seg.N.values, seg.E.values)
     res["xt_truth_rms_m"] = round(float(np.sqrt(np.mean(xt ** 2))), 2)
     res["xt_truth_p95_m"] = round(float(np.percentile(xt, 95)), 2)
@@ -215,8 +224,9 @@ def analyze_mission(run, meta, tr, df, events):
     a.plot(wps[:, 1], wps[:, 0], "o", ms=3, color=C[1], label="waypoints")
     if cam is not None:
         a.plot(ce, cn, "^", ms=3.5, color=C[2], label="camera triggers")
-    a.plot(0, 0, "s", color=INK, ms=5); a.annotate("home / launch", (0, 0), (8, -12), textcoords="offset points", color=INK2)
-    a.set_aspect("equal"); a.set_xlabel("East [m]"); a.set_ylabel("North [m]"); a.legend(loc="lower left")
+    a.plot(0, 0, "s", color=INK, ms=5); a.annotate("home / launch", (0, 0), (10, 2), textcoords="offset points", color=INK2, fontsize=8)
+    a.set_aspect("equal"); a.set_xlabel("East [m]"); a.set_ylabel("North [m]")
+    a.legend(loc="upper center", bbox_to_anchor=(0.5, -0.09), ncol=2, fontsize=7.5)
     a.set_title(f"{os.path.basename(run)} - ground track", loc="left")
     b = ax[1]
     along = idx  # metres along centreline (ds = 1 m)
@@ -233,7 +243,8 @@ def analyze_mission(run, meta, tr, df, events):
             b.text((sgm[0] + sgm[-1]) / 2, b.get_ylim()[1] * 0.0 + max(xt) * 1.02, f"R{int(r)}", ha="center",
                    color=INK2, fontsize=8)
     b.set_xlabel("distance along canal [m]"); b.set_ylabel("cross-track error [m]")
-    b.set_title(f"XT rms {res['xt_truth_rms_m']} m, max {res['xt_truth_max_m']} m", loc="left")
+    b.set_title(f"XT rms {res['xt_truth_rms_m']} m, max {res['xt_truth_max_m']} m (after joining; entry {res['course_entry_s']} s, "
+                f"max {res['course_entry_xt_max_m']} m)", loc="left", fontsize=9)
     save(fig, run, "track_xt.png")
     plot_timeseries(run, tr, events, f"{os.path.basename(run)} - flight overview")
     return res
@@ -318,6 +329,9 @@ def analyze_stall(run, meta, tr, df, events, model):
         t_rec = float(rec.t.iloc[0]) if len(rec) else None
         win = tr[(tr.t >= tb) & (tr.t <= (t_rec if t_rec is not None else st["t1"] + 15))]
         alt_loss_rec = float(r.h_agl - win.h_agl.min()) if len(win) else None
+        wr = tr[(tr.t >= st["t1"]) & (tr.t <= (t_rec if t_rec is not None else st["t1"] + 15) + 2)]
+        h_rel = float(np.interp(st["t1"], tr.t, tr.h_agl))
+        alt_loss_release = float(h_rel - wr.h_agl.min()) if len(wr) else None
         out.append(dict(rep=k, t_stall=round(tb, 2), CL_max_seen=round(float(r.CL), 3),
                         alpha_at_CLmax_deg=round(a_b, 2), V_cas_at_CLmax=round(float(r.V_cas), 2),
                         nz=round(nz, 2), V_stall_1g_est=round(v_s1g, 2),
@@ -328,7 +342,8 @@ def analyze_stall(run, meta, tr, df, events, model):
                         nose_drop_deg=None if nose_drop is None else round(nose_drop, 1),
                         locked_in_s=round(locked_s, 1), t_stick_release=round(float(st["t1"]), 2),
                         recovery_s=None if t_rec is None else round(t_rec - float(st["t1"]), 1),
-                        alt_loss_break_to_recovery_m=None if alt_loss_rec is None else round(alt_loss_rec, 1)))
+                        alt_loss_break_to_recovery_m=None if alt_loss_rec is None else round(alt_loss_rec, 1),
+                        alt_loss_release_to_recovery_m=None if alt_loss_release is None else round(alt_loss_release, 1)))
     res = {"stalls": out}
     if out:
         res["V_stall_1g_mean"] = round(float(np.mean([o["V_stall_1g_est"] for o in out])), 2)
@@ -348,7 +363,8 @@ def analyze_stall(run, meta, tr, df, events, model):
                 a.axvline(out[k]["t_stall"], color=INK2, lw=0.8, ls=":")
             ax[0].set_title(f"Stall {k} (L/R CLmax asymmetry {'on' if meta.get('stall_asymmetry') else 'off'}): CLmax {out[k]['CL_max_seen']} "
                             f"at {out[k]['V_cas_at_CLmax']} m/s; wing drop {out[k]['wing_drop_deg']} deg, "
-                            f"recovery {out[k]['recovery_s']} s, loss {out[k]['alt_loss_break_to_recovery_m']} m", loc="left", fontsize=8.5)
+                            f"recovery {out[k]['recovery_s']} s after release; height lost after release {out[k]['alt_loss_release_to_recovery_m']} m "
+                            f"(break->recovery {out[k]['alt_loss_break_to_recovery_m']} m, stick held ~7 s)", loc="left", fontsize=8)
             for a in ax:
                 a.axvline(meta["stalls"][k]["t1"], color=C[3], lw=0.8, ls="--")
             ax[3].text(meta["stalls"][k]["t1"], ax[3].get_ylim()[0], " stick released", color=C[3], fontsize=8, va="bottom")
@@ -383,10 +399,12 @@ def analyze_launch(run, meta, tr, df, events):
     ax[0].plot(tt, d.h_agl, color=C[0]); ax[0].set_ylabel("height [m]")
     ax[1].plot(tt, d.V_tas, color=C[0]); ax[1].set_ylabel("TAS [m/s]")
     ax[2].plot(tt, d.throttle * 100, color=C[0]); ax[2].set_ylabel("throttle [%]")
-    ax[3].plot(tt, d.alpha_deg, color=C[0], label="alpha"); ax[3].plot(tt, d.theta_deg, color=C[1], label="pitch")
+    ax[3].plot(tt, d.alpha_deg.where(d.V_tas > 3.0), color=C[0], label="alpha (V > 3 m/s)"); ax[3].plot(tt, d.theta_deg, color=C[1], label="pitch")
     ax[3].legend(ncol=2, loc="upper right"); ax[3].set_ylabel("[deg]"); ax[3].set_xlabel("time since throw start [s]")
-    ax[0].set_title(f"Hand launch: {meta.get('accel')} m/s^2 x {meta.get('dur')} s -> release {res.get('release_tas')} m/s, "
-                    f"motor +{res.get('motor_start_delay_s')} s", loc="left")
+    ax[0].set_title(f"{os.path.basename(run)}: {meta.get('accel')} m/s^2 x {meta.get('dur')} s -> release {res.get('release_tas')} m/s, "
+                    f"motor +{res.get('motor_start_delay_s')} s\nmodel {meta.get('model', '?')}; {str(meta.get('env_label') or 'calm')[:95]}",
+                    loc="left", fontsize=8.5)
+    ax[3].plot([], [])
     save(fig, run, "launch.png")
     return res
 
@@ -420,7 +438,7 @@ def analyze_fs(run, meta, tr, df, events):
     if trig:
         p = tr.iloc[(tr.t - trig["t"]).abs().argmin()]
         a.plot(p.E, p.N, "X", color=C[7], ms=9, label=trig["name"])
-    a.set_aspect("equal"); a.legend(loc="lower left"); a.set_xlabel("East [m]"); a.set_ylabel("North [m]")
+    a.set_aspect("equal"); a.legend(loc="upper center", bbox_to_anchor=(0.5, -0.09), ncol=3); a.set_xlabel("East [m]"); a.set_ylabel("North [m]")
     save(fig, run, "fs_track.png")
     return res
 
@@ -471,11 +489,15 @@ def analyze_vtol(run, meta, tr, df, events):
     return res
 
 
-def envelope_metrics(tr):
-    """max |nz|, max airspeed, throttle saturation in flight (truth log)."""
+def envelope_metrics(tr, alpha_stall_deg=None):
+    """max |nz|, max airspeed, throttle saturation and time above the stall alpha in flight (truth log)."""
     out = {}
     fl = tr[(tr.state != "HELD") & (tr.h_agl > 5)] if "state" in tr else tr
     if len(fl):
+        if alpha_stall_deg is not None:
+            dts = float(np.median(np.diff(fl.t))) if len(fl) > 2 else 0.04
+            out["stall_time_s"] = round(float(((fl.alpha_deg > alpha_stall_deg) & (fl.V_tas > 3)).sum() * dts), 2)
+            out["alpha_stall_model_deg"] = alpha_stall_deg
         out["max_nz"] = round(float(fl.nz.max()), 2)
         out["min_nz"] = round(float(fl.nz.min()), 2)
         out["max_cas"] = round(float(fl.V_cas.max()), 2)
@@ -549,7 +571,7 @@ def analyze_run(run):
         res.update(analyze_vtol(run, meta, tr, df, events))
     elif k == "smoke":
         plot_timeseries(run, tr, events, f"{os.path.basename(run)} - smoke flight")
-    res.update(envelope_metrics(tr))
+    res.update(envelope_metrics(tr, (model.get("aero", {}).get("derivatives") or {}).get("alpha_stall_deg")))
     if "error" in meta:
         res["run_error"] = meta["error"]
     json.dump(res, open(os.path.join(run, "metrics.json"), "w"), indent=1, default=str)
@@ -573,6 +595,8 @@ def l1_summary(runs, out):
         ax[0].plot(P, [m["xt_truth_by_bend"].get(k, {}).get("rms", np.nan) for _, m in rows], "o-", color=C[i], label=k)
         ax[1].plot(P, [m["xt_truth_by_bend"].get(k, {}).get("max", np.nan) for _, m in rows], "o-", color=C[i], label=k)
     ax[0].set_ylabel("RMS cross-track [m]"); ax[1].set_ylabel("max cross-track [m]")
+    for a in ax:
+        a.set_ylim(0, a.get_ylim()[1] * 1.25)
     for a in ax:
         a.set_xlabel("NAVL1_PERIOD [s]"); a.legend(ncol=5, loc="upper left", fontsize=8)
     ax[0].set_title("Path tracking vs L1 period, by canal bend radius (truth vs centreline)", loc="left")

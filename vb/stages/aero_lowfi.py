@@ -319,9 +319,8 @@ def run(ctx):
     if pw:
         fig, ax = plt.subplots(figsize=(6, 3.4))
         ax.plot([p["V"] for p in pw], [p["P_aero_W"] for p in pw], "o-", color=PALETTE[0], label="aerodynamic power D*V")
-        ax.axvspan(Vs, Vs_p, color=PALETTE[7], alpha=0.12, lw=0)
-        ax.axvline(Vs, color=PALETTE[7], ls=":", lw=1); ax.text(Vs, ax.get_ylim()[1] * 0.92, " Vs nom.", color=PALETTE[7], ha="right")
-        ax.text(Vs_p, ax.get_ylim()[1] * 0.80, " Vs pess.", color=PALETTE[7])
+        ax.axvspan(Vs, Vs_p, color=PALETTE[7], alpha=0.12, lw=0, label=f"Vs nominal {Vs:.2f} - pessimistic {Vs_p:.2f} m/s")
+        ax.legend(loc="upper left", fontsize=8)
         ax.axvline(vc, color=INK2, ls="--", lw=1); ax.text(vc, ax.get_ylim()[1] * 0.92, " cruise", color=INK2)
         ax.set(xlabel="airspeed [m/s]", ylabel="power [W]", title="Aerodynamic power required (level, ISA SL)")
         save(fig, out / "power_required.png")

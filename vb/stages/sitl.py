@@ -204,7 +204,7 @@ def run(ctx):
 
     # ---- mandatory evidence: every planned run flown, every required metric logged (review M6) ----------
     REQ = {"mission": ["xt_truth_rms_m", "course_Wh_per_km", "min_airspeed_inflight", "max_cas", "max_nz", "roll_weave_wp_amp_deg"],
-           "launch": ["min_cas_after_release", "height_at_10s_m", "max_cas"], "stall": ["stalls", "V_stall_1g_mean"],
+           "launch": ["min_cas_after_release", "height_at_10s_m", "crashed"], "stall": ["stalls", "V_stall_1g_mean"],
            "fs_rc": ["first_mode_change_after_trigger"], "fs_gcs": ["first_mode_change_after_trigger"], "fs_batt": ["trigger"],
            "vtol": ["landing_pos_error_m", "hover_power_W", "ap_QTUN_ThO_median", "hover_throttle_lift", "vtol_phase_energy_Wh"], "smoke": ["mode_changes", "max_cas"],
            "cruise": ["table"]}
@@ -236,10 +236,16 @@ def run(ctx):
                  "WARN" if name.startswith(("fs_batt", "launch_weak")) else "FAIL", note=str(err or "")[:150])
         if r.get("min_airspeed_inflight") is not None and not name.startswith(("stall", "launch_weak")) and "vtol" not in name:
             mca = r["min_airspeed_inflight"]
+            vs_flown = Vs_pess if "pess" in name else Vs_nom
             G("min airspeed in flight >= pessimistic Vs (AIRSPEED_STALL) [m/s]", mca, Vs_pess, ">=",
-              "FAIL" if mca < Vs_nom else "WARN", "m/s",
-              note=f"Vs nominal {Vs_nom:.2f} (model flown) / pessimistic {Vs_pess:.2f} m/s; below nominal = FAIL",
-              drivers=["/airframe/lifting_surfaces/wing/cl_max"])
+              "FAIL" if mca < vs_flown else "WARN", "m/s",
+              note=f"model flown: {'PESSIMISTIC' if 'pess' in name else 'nominal'} CLmax (Vs {vs_flown:.2f} m/s); below the flown "
+                   f"model's Vs = FAIL, below Vs pessimistic {Vs_pess:.2f} = WARN", drivers=["/airframe/lifting_surfaces/wing/cl_max"])
+        if r.get("stall_time_s") is not None and not name.startswith(("stall", "launch_weak")):
+            G("unintended stall in flight: time above the stall alpha (h > 5 m) [s]", r["stall_time_s"], 0.5, "<=", "FAIL", "s",
+              note=f"alpha_stall {r.get('alpha_stall_model_deg')} deg of the model flown ({'PESSIMISTIC' if 'pess' in name else 'nominal'} "
+                   "CLmax); a gust or TECS speed undershoot that stalls the aircraft = raise AIRSPEED_MIN/AIRSPEED_CRUISE or fly calmer air",
+              drivers=["/airframe/lifting_surfaces/wing/cl_max", "/avionics/params/AIRSPEED_MIN"])
         if r.get("max_cas") is not None:
             G(f"max airspeed <= VNE [m/s]", r["max_cas"], env_["v_ne"], "<=", "FAIL", "m/s")
         if r.get("max_cas") is not None and "vtol" not in name and not name.startswith("stall"):
@@ -290,10 +296,12 @@ def run(ctx):
             recs = [x.get("recovery_s") for x in sts]
             G("recovers within 10 s of releasing the stick (alpha < break - 2 deg, |roll| < 30 deg, sink < 2 m/s)",
               all(x is not None and x <= 10 for x in recs), True, "bool", "FAIL", note=f"recovery times {recs} s")
-            al = [x.get("alt_loss_break_to_recovery_m") for x in sts if x.get("alt_loss_break_to_recovery_m") is not None]
+            al = [x.get("alt_loss_release_to_recovery_m") for x in sts if x.get("alt_loss_release_to_recovery_m") is not None]
+            alb = [x.get("alt_loss_break_to_recovery_m") for x in sts if x.get("alt_loss_break_to_recovery_m") is not None]
             if al:
-                G("altitude lost from the break to recovery [m]", max(al), 30.0, "<=", "WARN", "m",
-                  note=f"TEAM CRITERION 30 m; practise stalls above {max(30, 2 * max(al)):.0f} m with STALL_PREVENTION=0 only")
+                G("height lost from stick release to recovery [m]", max(al), 20.0, "<=", "WARN", "m",
+                  note=f"TEAM CRITERION 20 m; break -> recovery incl. ~7 s of held full-back stick {max(alb) if alb else '-'} m; practise "
+                       f"stalls above {max(50, 2 * (max(alb) if alb else 0)):.0f} m with STALL_PREVENTION=0 only")
             lk = max((x.get("locked_in_s") or 0) for x in sts)
             G("post-stall pitch: time alpha stays > break + 3 deg with the stick held [s] (no nose-down break = locked-in stall)", lk, 3.0,
               "<=", "WARN", "s", note=f"nose drop in 3 s after the break {[x.get('nose_drop_deg') for x in sts]} deg; post-stall Cm "
@@ -415,13 +423,14 @@ def run(ctx):
         ax.barh(range(len(bars)), [v for _, v in bars], color=[PALETTE[0], PALETTE[3], PALETTE[1], PALETTE[2]][:len(bars)], height=0.55)
         for i, (k, v) in enumerate(bars):
             ax.text(v + 1, i, f"{v:.0f} Wh", va="center", color=INK2, fontsize=8.5)
-        ax.set_yticks(range(len(bars))); ax.set_yticklabels([k for k, _ in bars]); ax.invert_yaxis()
+        ax.set_yticks(range(len(bars))); ax.set_yticklabels([k for k, _ in bars])
         ax.axvline(mi["available_after_reserve_Wh"], color=PALETTE[7], ls="--", lw=1.4)
-        ax.text(mi["available_after_reserve_Wh"], len(bars) - 0.45, " usable after reserve", color=PALETTE[7], fontsize=8.5)
-        ax.set_xlim(0, max(max(v for _, v in bars), mi["available_after_reserve_Wh"]) * 1.25)
+        ax.text(mi["available_after_reserve_Wh"], -0.45, "usable after reserve ", color=PALETTE[7], fontsize=8.5, ha="right", va="center")
+        ax.set_xlim(0, max(max(v for _, v in bars), mi["available_after_reserve_Wh"]) * 1.12)
+        ax.set_ylim(len(bars) - 0.5, -0.75)
         ax.set_xlabel("mission energy [Wh] (UNCALIBRATED until F3 cruise legs)")
         ax.yaxis.grid(False)
-        ax.set_title(f"Mission '{mi['name']}' energy: band of estimates", loc="left")
+        ax.set_title(f"Mission energy band: {mi['name']}", loc="left", fontsize=10)
         save(fig, ctx.dir / "mission_energy_band.png")
         ctx.add_file(ctx.dir / "mission_energy_band.png", "Mission energy: steady (nominal/pessimistic drag) vs SITL-calibrated (calm / mission env)", "figure")
     # L1 sweep summary

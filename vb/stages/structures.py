@@ -36,7 +36,7 @@ def run(ctx):
     plt = style()
     # V-n diagram
     vn = diag["vn"]
-    fig, ax = plt.subplots(figsize=(7.5, 4.4))
+    fig, ax = plt.subplots(figsize=(10, 4.4))
     V = np.array(vn["V"])
     ax.plot(V, vn["n_stall"], color=PALETTE[0], label=f"stall boundary (CLmax {vn['clmax']:.2f}, lift model)")
     ax.plot(V, -0.7 * np.array(vn["n_stall"]), color=PALETTE[0], lw=1, ls="--")
@@ -56,7 +56,7 @@ def run(ctx):
     ax.set(xlabel="equivalent airspeed [m/s]", ylabel="load factor n", title=f"V-n diagram (manoeuvre + Pratt gust); Vs nominal {vn['Vs']:.2f} m/s"
            + (f", band to {aero['V_stall_pess']:.2f}" if aero and aero.get("V_stall_pess") else ""),
            ylim=(y0, env["n_limit_pos"] + 1.5), xlim=(0, env["v_ne"] * 1.05))
-    ax.legend(loc="upper left", fontsize=7.5)
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=7.5)
     save(fig, ctx.dir / "vn_diagram.png")
     ctx.add_file(ctx.dir / "vn_diagram.png", "V-n diagram", "figure")
     # spar moment and stress ratio
