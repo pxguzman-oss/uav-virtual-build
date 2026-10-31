@@ -41,3 +41,4 @@ figure review, REVIEW_RESPONSE.txt. Scratch test dir /tmp/vbt (copy of out/), ne
 [R3] M5/M6 committed: provenance + expected keys, INCOMPLETE on stale/mixed results, NOT RUN, quick -> 'INCOMPLETE - quick fidelity', INFO for gate-less stages, ERROR gates for missing SITL runs/metrics, marginal flag (<5 %).
 [R4] M1/M9/M7/M8 (+m1, M3 model) committed. Calm SITL/steady propulsive power ratio 1.05 (was 1.28); env 1.29. Range band base 139-176 km (conservative 139, pessimistic drag). VTOL mission 64.8 Wh incl. VTOL phases. Q_M_THST_HOVER now ThO-domain (0.547 at plan AUW).
 [R5] M3 committed. Stall (asym +-7.5 %): wing drop 9 deg, recovery 2-3 s, alt loss 44-46 m (WARN > 30 m team), alpha locked >break+3 for 6.7 s with stick held (WARN).
+[R6] M4 (+m2, m11 source) committed: assumption corners: spiral worst 7.9 s (washout 0), SM 13.5-25 % over corners (sweep +-2), Vv 0.0174 at V-tail dihedral 30.
