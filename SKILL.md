@@ -55,7 +55,9 @@ ingest → geometry(+renders) → mass/CG/inertia → clash → aero_lowfi → p
 | standard, base | ≈ 12 min warm, ≈ 30 min cold (≈ 17 min wing-body CFD, ≈ 11 min SITL in calm and mission wind) |
 | standard, VTOL variant, CFD cached | ≈ 4.5 min |
 | full | ≈ 1.5–3 h (estimate) |
-| re-running only the report | ≈ 25 s | Run anything over 5 minutes with `nohup` and poll the log. If the container restarts, re-run the same command: finished stages are cached.
+| re-running only the report | ≈ 25 s |
+
+Run anything over 5 minutes with `nohup` and poll the log. If the container restarts, re-run the same command: finished stages are cached.
 
 **Sub-agents** (use them for standard and full runs, and for multiple variants). Give each a narrow brief and the repo path. They share results only through `out/<plan>/<variant>/<stage>/result.json`.
 
