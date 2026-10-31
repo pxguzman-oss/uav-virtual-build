@@ -19,12 +19,8 @@ sys.path.insert(0, str(ROOT))
 
 
 def _ensure_env():
-    """Re-exec with the project venv (setup/paths.env VB_VENV or ./.venv) if this interpreter lacks the packages."""
-    try:
-        import numpy, yaml, jsonschema  # noqa: F401
-        return
-    except ImportError:
-        pass
+    """Run under the project venv (VB_VENV env var, setup/paths.env VB_VENV, or ./.venv) when one exists;
+    otherwise the current interpreter must have the packages."""
     import os
     venv = os.environ.get("VB_VENV")
     pe = ROOT / "setup" / "paths.env"
@@ -33,9 +29,14 @@ def _ensure_env():
             if line.startswith("VB_VENV="):
                 venv = line.split("=", 1)[1].strip()
     for cand in [venv, str(ROOT / ".venv")]:
-        if cand and Path(cand, "bin", "python").exists() and Path(sys.executable).resolve() != Path(cand, "bin", "python").resolve():
-            os.execv(str(Path(cand, "bin", "python")), [str(Path(cand, "bin", "python"))] + sys.argv)
-    sys.exit("python packages missing: run setup/install.sh (or activate the venv)")
+        if cand and Path(cand, "bin", "python").exists():
+            if Path(sys.prefix).resolve() != Path(cand).resolve():
+                os.execv(str(Path(cand, "bin", "python")), [str(Path(cand, "bin", "python"))] + sys.argv)
+            return
+    try:
+        import numpy, yaml, jsonschema, trimesh  # noqa: F401
+    except ImportError:
+        sys.exit("python packages missing: run setup/install.sh (or activate the venv)")
 
 
 _ensure_env()
