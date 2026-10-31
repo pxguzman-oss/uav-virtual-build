@@ -13,3 +13,10 @@ NOTE: aero/cases/mesh_l67 simpleFoam (alpha 8) was running at start - never touc
      Plan now uses CFD kind wingbody (standard) / wingbodytail (full). Testing wingbody CFD timing.
      NEXT: verify install.sh in scratch (VB_SKIP_ARDUPILOT), cold timed runs: smoke.sh (quick base), standard base,
      quick vtol; final figure review; fill README placeholders; final report.
+[M3] 23:29 cold runs: quick base (tests/smoke.sh) 68 s; standard base 11.6 min (CFD wingbody 1 alpha 400k cells 6.0 min,
+     SITL 6 runs 4.7 min); quick vtol 1.6 min. install.sh verified in /tmp/vbtest (VB_SKIP_ARDUPILOT=1, 1m40 incl.
+     venv from pip cache, AVL, xfoil, shim) + ArduPilot clone/submodules/configure verified in /tmp/aptest (build skipped).
+     Fixed since: AVL 80-char path truncation (relative paths), SITL auto free instance (parallel runs OK, tested -I 2),
+     CFD moment ref = design CG (base/vtol share CFD cache), VTOL lift ESC moved forward (CG), run.py venv re-exec.
+     Full-fidelity SITL matrix test running in out_full (log /tmp/full_sitl.log).
+     NEXT: final standard base + vtol quick/standard with final code, fill README runtimes (@@RUNTIMES@@), final report.
