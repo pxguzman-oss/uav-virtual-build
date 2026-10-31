@@ -5,7 +5,7 @@ Frame = structural frame of geom/stork.yaml in METRES: +X aft, +Y right, +Z up, 
 Half-model: components are cut at the symmetry plane by snappyHexMesh, so every part is extended slightly
 past y = 0 (wing root, V-tail root) or written full (fuselage).
 
-  python cfd_geom.py --yaml /home/claude/research/geom/stork.yaml --kind wing      --out geom/wing
+  python cfd_geom.py --yaml <geometry stork.yaml> --kind wing      --out geom/wing
   python cfd_geom.py --yaml ...                                  --kind wingbody  --out geom/wingbody   (wing+fuselage+vtail)
 Each component -> <out>/<component>.stl (ASCII, solid name = component). Also writes <out>/geom.json with refs.
 """
@@ -131,7 +131,7 @@ def fuselage_surface(g, n_theta=64, n_x=60):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--yaml", default="/home/claude/research/geom/stork.yaml")
+    ap.add_argument("--yaml", required=True)
     ap.add_argument("--kind", choices=["wing", "wingbody", "wingbodytail"], default="wing")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()

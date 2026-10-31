@@ -36,7 +36,7 @@ STAGES = [
          code=["vb/stages/flightmodel.py", "vb/adapters/model2sim.py", "vb/lib/sim/gen_model.py", "data/ardupilot", "vb/liftmodel.py"]),
     dict(name="sitl", deps=["flightmodel"], soft=["propulsion"], cheap=False, fid=True, timeout=6 * 3600,
          keys=["/missions", "/environment_cases", "/analysis/sitl", "/envelope"],
-         code=["vb/stages/sitl.py", "vb/lib/sim"]),
+         code=["vb/stages/sitl.py", "vb/lib/sim", "data/ardupilot"]),
     dict(name="report", deps=[], soft=["ingest", "geometry", "mass", "clash", "aero_lowfi", "propulsion", "structures",
                                        "cfd", "flightmodel", "sitl"], cheap=True, fid=True, timeout=900,
          keys=["/"], code=["vb/stages/report.py"]),

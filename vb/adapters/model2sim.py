@@ -105,7 +105,10 @@ def build(plan, mass, aero_ds, sim_block, prop_res, plan_dir, launch_cfg=None):
                         cell_rc_r_ohm=c.get("r_rc", 0.5 * P.val(c["r_dc"])), cell_rc_tau_s=c.get("rc_tau_s", 30),
                         pack_extra_r_ohm=e.get("pack_wiring_r", 0.006),
                         ocv_table=dict(soc=c.get("ocv_soc", OCV_SOC), v_cell=c.get("ocv_v", OCV_V)),
-                        v_cell_cutoff=max(c.get("v_min", 2.8), 2.8), initial_soc=1.0, mass_kg=c["mass"] * e["series"] * e["parallel"])
+                        v_cell_cutoff=max(c.get("v_min", 2.8), 2.8), initial_soc=1.0,
+                        # review m10: battery mass from the component list (category energy), cells only as a fallback
+                        mass_kg=sum(P.val(x["mass"]) for x in plan["components"] if x.get("category") == "energy")
+                        or c["mass"] * e["series"] * e["parallel"])
     m["electrical"] = {"avionics_power_w": plan.get("avionics", {}).get("avionics_power_W", 4.0)}
     # ground contacts
     z_bot = min(s[3] - s[2] / 2 for s in st)

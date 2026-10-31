@@ -60,6 +60,7 @@ airframe:
       dihedral_deg: {value: 35, source: "assumption: 110 deg included angle", range: [30, 40]}
       x_le_root: {value: 0.440, source: "assumption (struct prototype had 0.46)", range: [0.42, 0.46]}
       z_le_root: {value: 0.014, source: "assumption", range: [0.0, 0.03]}
+      incidence_deg: {value: 0.0, source: "assumption: V-tail incidence not in the manual (review m8); measure on the printed parts", range: [-2.0, 0.0]}
       sections_per_side: 4
       airfoil: NACA0009
       thickness_ratio: 0.09

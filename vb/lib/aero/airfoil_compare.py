@@ -8,7 +8,7 @@ Outputs:
   out/airfoil/summary.json (CLmax, alpha_stall, CDmin, CL/CD max, timings)
   out/airfoil/s3021_polars.png
 Usage:
-  /home/claude/venvs/aero/bin/python airfoil_compare.py [--airfoil s3021] [--xfoil /usr/bin/xfoil]
+  python airfoil_compare.py [--airfoil s3021] [--xfoil /usr/bin/xfoil]
 """
 import argparse, json, os, subprocess, tempfile, time
 import numpy as np

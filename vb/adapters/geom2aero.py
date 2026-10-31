@@ -35,7 +35,7 @@ def build(plan, cg_m, mass_kg):
         "fuse": dict(stations=[list(s) for s in af["fuselage"]["stations"]], exponent=af["fuselage"].get("exponent", 2.0)),
         "vtail": dict(airfoil=vt["airfoil"].lower(), x_le=vt.get("x_le_root", 0.0), z=vt.get("z_le_root", 0.0),
                       cr=vt["root_chord"], ct=vt["tip_chord"], panel_span=vt["span"], dihedral_deg=vt.get("dihedral_deg", 35),
-                      sweep_le_deg=vt.get("sweep_le_deg", 0.0)),
+                      sweep_le_deg=vt.get("sweep_le_deg", 0.0), incidence_deg=vt.get("incidence_deg", 0.0)),
         "ref": dict(S=mg["area"], b=w["span"], c=mg["mac"], x_cg=float(cg_m[0])),
         "zref": float(cg_m[2]),
         "controls": {},

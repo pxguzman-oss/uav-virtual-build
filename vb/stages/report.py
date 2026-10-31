@@ -595,7 +595,7 @@ def run(ctx):
             D.ul(r["notes"])
         figs = [f for f in r.get("files", []) if f.get("kind") == "figure" and not (s == "geometry")]
         if s == "sitl":
-            pref = ("timeseries", "track_xt", "stall_0", "launch", "fs_track", "vtol", "cruise_power")
+            pref = ("timeseries", "track_xt", "stall_0", "launch", "fs_track", "vtol", "cruise_power", "mission_energy_band")
             figs = [f for f in figs if Path(f["path"]).stem in pref]
             figs = [f for f in figs if not ("mission_l1" in f["path"] and "timeseries" in f["path"] and "_l1_15" not in f["path"])]
         for f in figs:

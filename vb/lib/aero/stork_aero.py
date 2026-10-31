@@ -14,7 +14,7 @@ Tools (all run here, see REPORT.md):
     props + lift motors, excrescences/roughness for printed skin) as CD*A increments.
 
 Usage:
-  /home/claude/venvs/aero/bin/python stork_aero.py --yaml /home/claude/research/geom/stork.yaml \
+  python stork_aero.py --yaml <geometry stork.yaml> \
       [--vtol] [--mass 1.775] [--out out/stork_p0] [--avl tools/bin/avl]
 Outputs (in --out):
   aero_dataset.json  (validates against aero_dataset.schema.json)
@@ -136,9 +136,10 @@ def build_asb(g, deflections=None):
     wings.append(asb.Wing(name="Wing", symmetric=True, xsecs=xsecs))
     # V-tail panels: model right panel symmetric (ASB mirrors across XZ plane -> V)
     vx = []
+    inc = g["vtail"].get("incidence_deg", 0.0)
     for s in (0.0, 1.0):
         xle, y, z, ch = vtail_station(g, s, +1)
-        vx.append(asb.WingXSec(xyz_le=[xle, y, z], chord=ch, airfoil=taf))
+        vx.append(asb.WingXSec(xyz_le=[xle, y, z], chord=ch, twist=inc, airfoil=taf))
     wings.append(asb.Wing(name="V-tail", symmetric=True, xsecs=vx))
     fus = []
     st = g["fuse"]["stations"]
@@ -243,7 +244,8 @@ def write_avl(g, path, afdir, include_vtail=True, include_body=True):
         ss = (0.0, 1.0) if side > 0 else (1.0, 0.0)
         for s in ss:
             xle, y, z, ch = vtail_station(g, s, side)
-            L += ["SECTION", f"{xle:.5f} {y:.5f} {z:.5f} {ch:.5f} 0.0", "NACA", g["vtail"]["airfoil"].lower().replace("naca", "")]
+            L += ["SECTION", f"{xle:.5f} {y:.5f} {z:.5f} {ch:.5f} {g['vtail'].get('incidence_deg', 0.0):.3f}", "NACA",
+                  g["vtail"]["airfoil"].lower().replace("naca", "")]
             L += ctrl_lines(f"rv_{tag}", ctl["ruddervator"]["hinge_xc"])
             L.append("")
     # Fuselage as AVL BODY (slender-body source line), side-view outline file
@@ -665,7 +667,7 @@ def plots(ds, outdir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--yaml", default="/home/claude/research/geom/stork.yaml")
+    ap.add_argument("--yaml", required=True, help="research-prototype geometry YAML (the pipeline calls analyse() directly)")
     ap.add_argument("--vtol", action="store_true")
     ap.add_argument("--mass", type=float, default=None, help="kg (default 1.775 fixed wing, 2.6 VTOL)")
     ap.add_argument("--avl", default=os.path.join(HERE, "tools", "bin", "avl"))

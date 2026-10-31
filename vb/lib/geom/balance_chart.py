@@ -139,7 +139,7 @@ def main(model_dir, out=None):
     bx.axvline(0, color=INK2, lw=1)
     lim = max(abs(min(vals)), abs(max(vals))) * 1.25
     bx.set_xlim(-lim, lim)
-    bx.set_xlabel("moment about CG target [g·m]   (<0 nose-heavy, >0 tail-heavy; sum = total mass x CG error)", color=INK2)
+    bx.set_xlabel("moment about CG target [kg·mm] (= g·m)   (<0 nose-heavy, >0 tail-heavy; sum = total mass x CG error)", color=INK2)
     bx.grid(axis="x", color=GRID, lw=0.8)
     bx.set_axisbelow(True)
     fig.tight_layout()

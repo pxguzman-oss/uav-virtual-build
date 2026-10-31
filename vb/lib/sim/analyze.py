@@ -150,6 +150,30 @@ def analyze_mission(run, meta, tr, df, events):
         by_r[key] = dict(rms=round(float(np.sqrt(np.mean(xt[m] ** 2))), 2), max=round(float(xt[m].max()), 2),
                          n=int(m.sum()))
     res["xt_truth_by_bend"] = by_r
+    # roll weave (review M10). High-pass the roll angle (minus a 4 s moving mean, which keeps the steady bank of the
+    # bends); (1) whole-course weave = half peak-to-peak (2.5..97.5 %) of the high-passed roll; (2) the part at the
+    # waypoint-passing frequency f_wp = V_ground / spacing (FFT band 0.75..1.25 f_wp, inverse FFT, half p2p).
+    try:
+        dt_ = float(np.median(np.diff(seg.t)))
+        phi = seg.phi_deg.values
+        k = max(int(round(4.0 / dt_)), 3)
+        hp = phi - np.convolve(phi, np.ones(k) / k, mode="same")
+        hp = hp[k:-k] - hp[k:-k].mean()
+        gs = float(np.mean(np.hypot(np.gradient(seg.N.values, seg.t.values), np.gradient(seg.E.values, seg.t.values))))
+        f_wp = gs / float(meta.get("spacing", 25.0))
+        X = np.fft.rfft(hp)
+        fr = np.fft.rfftfreq(len(hp), dt_)
+        band = (fr >= 0.75 * f_wp) & (fr <= 1.25 * f_wp)
+        xb = np.fft.irfft(np.where(band, X, 0), n=len(hp))
+        Fm = np.abs(X)
+        sel = (fr > 0.08) & (fr < 3.0)
+        res["roll_weave_amp_deg"] = round(float((np.percentile(hp, 97.5) - np.percentile(hp, 2.5)) / 2), 2)
+        res["roll_weave_wp_amp_deg"] = round(float((np.percentile(xb, 97.5) - np.percentile(xb, 2.5)) / 2), 2)
+        res["roll_weave_freq_Hz"] = round(float(fr[sel][np.argmax(Fm[sel])]), 3)
+        res["wp_passing_freq_Hz"] = round(f_wp, 3)
+        res["wp_spacing_m"] = float(meta.get("spacing", 25.0))
+    except Exception as ex:  # metric missing -> ERROR gate in the stage
+        res["roll_weave_error"] = str(ex)
     # course distance & energy
     dist = float(np.sum(np.hypot(np.diff(seg.N), np.diff(seg.E))))
     dWh = float(seg.Wh.iloc[-1] - seg.Wh.iloc[0])

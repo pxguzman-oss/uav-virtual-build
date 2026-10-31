@@ -377,7 +377,9 @@ def run(ctx):
         ax.set_yticks([]); ax.set_xlabel("energy [Wh]")
         ax.yaxis.grid(False); ax.set_ylim(-0.45, 0.4)
         ax.set_xlim(0, max(left, mi["usable_Wh"]) * 1.15)
-        ax.set_title(f"Mission energy: {mi['name']} ({mi['distance_km']:.0f} km, wind {mi['wind_mps']} m/s) = {mi['energy_Wh']:.0f} Wh", loc="left")
+        ax.set_title(f"Mission energy, STEADY model (nominal drag, uncalibrated): {mi['name']} ({mi['distance_km']:.0f} km, wind "
+                     f"{mi['wind_mps']} m/s) = {mi['energy_Wh']:.0f} Wh; pessimistic drag {mi.get('energy_pess_drag_Wh', float('nan')):.0f} Wh "
+                     "(SITL-calibrated values: SITL section)", loc="left", fontsize=8.5)
         ax.legend(ncol=7, loc="upper center", bbox_to_anchor=(0.5, -0.32), fontsize=8)
         save(fig, ctx.dir / "mission_energy.png")
         ctx.add_file(ctx.dir / "mission_energy.png", "Mission energy budget by segment vs usable energy", "figure")

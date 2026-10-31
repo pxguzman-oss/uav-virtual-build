@@ -101,6 +101,8 @@ def matrix(ctx, is_vtol, fm):
     base_l1 = an.get("l1_base", 15)
     T.append(("mission", f"mission_l1_{base_l1:g}", dict(l1=base_l1, **calm)))
     T.append(("mission", f"mission_wind_{std['name']}", dict(l1=base_l1, **wind)))
+    # waypoint-spacing check of the roll weave (review M10): same mission, sparser waypoints
+    T.append(("mission", f"mission_l1_{base_l1:g}_wp{an.get('wp_spacing_alt', 75):g}", dict(l1=base_l1, spacing=an.get("wp_spacing_alt", 75.0), **calm)))
     periods = an.get("l1_periods_full" if fid == "full" else "l1_periods_standard", [10, 15])
     for p in periods:
         if p != base_l1:
@@ -201,7 +203,7 @@ def run(ctx):
             ctx.add_file(f, f"SITL {name}: {f.stem}", "figure")
 
     # ---- mandatory evidence: every planned run flown, every required metric logged (review M6) ----------
-    REQ = {"mission": ["xt_truth_rms_m", "course_Wh_per_km", "min_airspeed_inflight", "max_cas", "max_nz"],
+    REQ = {"mission": ["xt_truth_rms_m", "course_Wh_per_km", "min_airspeed_inflight", "max_cas", "max_nz", "roll_weave_wp_amp_deg"],
            "launch": ["min_cas_after_release", "height_at_10s_m", "max_cas"], "stall": ["stalls", "V_stall_1g_mean"],
            "fs_rc": ["first_mode_change_after_trigger"], "fs_gcs": ["first_mode_change_after_trigger"], "fs_batt": ["trigger"],
            "vtol": ["landing_pos_error_m", "hover_power_W", "ap_QTUN_ThO_median", "hover_throttle_lift", "vtol_phase_energy_Wh"], "smoke": ["mode_changes", "max_cas"],
@@ -254,6 +256,13 @@ def run(ctx):
                 G(f"cross-track RMS to the canal centreline [m]", r["xt_truth_rms_m"], xt_max, "<=", "WARN", "m",
                          note=f"max {r.get('xt_truth_max_m')} m; worst bend " + str(max(r.get("xt_truth_by_bend", {}).items(),
                                                                                          key=lambda kv: kv[1]["rms"], default=("-", {}))[0]))
+        if name.startswith("mission") and r.get("roll_weave_wp_amp_deg") is not None:
+            f_w, f_wp = r.get("roll_weave_freq_Hz"), r.get("wp_passing_freq_Hz")
+            G("roll weave at the waypoint-passing frequency (half peak-to-peak) [deg]", r["roll_weave_wp_amp_deg"], 1.5, "<=", "WARN", "deg",
+              note=f"TEAM CRITERION (camera footage); f_wp = V/spacing = {f_wp} Hz ({r.get('wp_spacing_m')} m spacing); whole-course "
+                   f"weave {r.get('roll_weave_amp_deg')} deg, dominant {f_w} Hz; cause: L1 re-targets at every waypoint of a dense "
+                   "polyline with default (untuned) roll gains -> sparser waypoints on straights, longer NAVL1_PERIOD, roll AUTOTUNE",
+              drivers=["/analysis/sitl/wp_spacing"])
         if name.startswith("smoke"):
             G("launch, box and RTL completed", any(m[1] == 11 for m in r.get("mode_changes", []) if isinstance(m, (list, tuple))), True,
                      "bool", "FAIL")
@@ -417,7 +426,18 @@ def run(ctx):
         ctx.add_file(ctx.dir / "mission_energy_band.png", "Mission energy: steady (nominal/pessimistic drag) vs SITL-calibrated (calm / mission env)", "figure")
     # L1 sweep summary
     l1 = None
-    l1runs = [str(res_dir / n) for n in results if n.startswith("mission_l1") and "xt_truth_rms_m" in results[n]]
+    l1runs = [str(res_dir / n) for n in results if n.startswith("mission_l1") and "_wp" not in n and "xt_truth_rms_m" in results[n]]
+    # mission-design finding (review M10): roll weave vs waypoint spacing, same L1
+    base_l1 = an.get("l1_base", 15)
+    a_, b_ = results.get(f"mission_l1_{base_l1:g}"), next((results[n] for n in results if n.startswith(f"mission_l1_{base_l1:g}_wp")), None)
+    if a_ and b_ and a_.get("roll_weave_wp_amp_deg") is not None and b_.get("roll_weave_wp_amp_deg") is not None:
+        ctx.gate("mission design: waypoint spacing effect (calm, same NAVL1_PERIOD) - waypoint-rate weave sparse / dense",
+                 b_["roll_weave_wp_amp_deg"] / max(a_["roll_weave_wp_amp_deg"], 1e-3), None, "info", "INFO",
+                 note=f"{a_.get('wp_spacing_m'):g} m: waypoint-rate weave {a_['roll_weave_wp_amp_deg']} deg, whole-course {a_['roll_weave_amp_deg']} "
+                      f"deg, XT RMS {a_.get('xt_truth_rms_m')} m; {b_.get('wp_spacing_m'):g} m: {b_['roll_weave_wp_amp_deg']} deg, whole-course "
+                      f"{b_['roll_weave_amp_deg']} deg, XT RMS {b_.get('xt_truth_rms_m')} m. Both weaves track the waypoint rate: sparse points only "
+                      "help on straights (bends become long chords) -> one waypoint per straight leg, ~25 m points only in bends, tune "
+                      "WP_RADIUS / NAVL1_PERIOD and run roll AUTOTUNE")
     if len(l1runs) >= 2:
         try:
             l1 = AN.l1_summary(l1runs, str(ctx.dir / "l1_sweep.png"))

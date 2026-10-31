@@ -15,7 +15,8 @@ DRIVERS = {"wing spar": ["/materials/cf_pultruded/knockdown", "/materials/cf_pul
            "wing skin": ["/materials/lw_pla_230C/E", "/materials/lw_pla_230C/strength_tension"],
            "aeroelastic": ["/materials/lw_pla_230C/E (skin GJ)", "/airframe/lifting_surfaces/wing/skin"],
            "servos": ["/components/servo_*/torque_stall_Nm", "/airframe/lifting_surfaces/*/control_surfaces (horn/servo arms)"],
-           "booms": ["/airframe/booms", "/components/lift_pod_*"], "thermal": ["/environment_cases", "/materials/*/tg_C"]}
+           "booms": ["/airframe/booms", "/components/lift_pod_*"], "thermal": ["/environment_cases", "/materials/*/tg_C", "/environment_cases/hot_valley_summer/solar_heating_dT_C"],
+           "envelope": ["/envelope/gust_u_de", "/airframe/lifting_surfaces/wing/cl_max"]}
 
 
 def run(ctx):
@@ -35,21 +36,25 @@ def run(ctx):
     plt = style()
     # V-n diagram
     vn = diag["vn"]
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, ax = plt.subplots(figsize=(7.5, 4.4))
     V = np.array(vn["V"])
-    ax.plot(V, vn["n_stall"], color=PALETTE[0], label="stall boundary (CLmax)")
+    ax.plot(V, vn["n_stall"], color=PALETTE[0], label=f"stall boundary (CLmax {vn['clmax']:.2f}, lift model)")
     ax.plot(V, -0.7 * np.array(vn["n_stall"]), color=PALETTE[0], lw=1, ls="--")
-    ax.plot(V, vn["n_gust_c"], color=PALETTE[1], lw=1.2, label=f"gust {env.get('gust_u_de', {}).get('at_v_cruise', 7.5)} m/s")
+    ax.plot(V, vn["n_gust_c"], color=PALETTE[1], lw=1.2, label=f"gust +-{vn['U_c']:g} m/s (team value, Vc case)")
     ax.plot(V, 2 - np.array(vn["n_gust_c"]), color=PALETTE[1], lw=1.2)
-    ax.plot(V, vn["n_gust_ne"], color=PALETTE[3], lw=1.2, label=f"gust {env.get('gust_u_de', {}).get('at_v_ne', 5)} m/s")
-    ax.axhline(env["n_limit_pos"], color=PALETTE[7], ls="--", lw=1.2, label=f"n limit +{env['n_limit_pos']}")
+    ax.plot(V, vn["n_gust_ne"], color=PALETTE[3], lw=1.2, label=f"gust +-{vn['U_ne']:g} m/s (team value, VNE case)")
+    ax.plot(V, 2 - np.array(vn["n_gust_ne"]), color=PALETTE[3], lw=1.2)
+    ax.axhline(env["n_limit_pos"], color=PALETTE[7], ls="--", lw=1.2, label=f"n limit +{env['n_limit_pos']} / {env.get('n_limit_neg', -1.5)}")
     ax.axhline(env.get("n_limit_neg", -1.5), color=PALETTE[7], ls="--", lw=1.2)
-    y0 = min(-2.5, env.get("n_limit_neg", -1.5) - 0.8)
+    if aero and aero.get("V_stall_pess"):
+        ax.axvspan(vn["Vs"], aero["V_stall_pess"], color=PALETTE[0], alpha=0.12, lw=0)
+    y0 = min(-3.5, env.get("n_limit_neg", -1.5) - 0.8, float(np.min(2 - np.array(vn["n_gust_c"]))) - 0.3)
     for x, lab in ((vn["Vs"], "Vs"), (vn["VA"], "VA"), (env["v_cruise"], "Vc"), (env["v_ne"], "VNE")):
         ax.axvline(x, color=INK2, ls=":", lw=0.8)
         ax.text(x, y0 + 0.15, " " + lab, ha="left", va="bottom", color=INK2,
                 bbox=dict(boxstyle="round,pad=0.1", fc="#fcfcfb", ec="none"))
-    ax.set(xlabel="equivalent airspeed [m/s]", ylabel="load factor n", title="V-n diagram (manoeuvre + Pratt gust)",
+    ax.set(xlabel="equivalent airspeed [m/s]", ylabel="load factor n", title=f"V-n diagram (manoeuvre + Pratt gust); Vs nominal {vn['Vs']:.2f} m/s"
+           + (f", band to {aero['V_stall_pess']:.2f}" if aero and aero.get("V_stall_pess") else ""),
            ylim=(y0, env["n_limit_pos"] + 1.5), xlim=(0, env["v_ne"] * 1.05))
     ax.legend(loc="upper left", fontsize=7.5)
     save(fig, ctx.dir / "vn_diagram.png")
@@ -75,7 +80,12 @@ def run(ctx):
     ctx.add_file(ctx.dir / "spar_utilisation.png", "Wing bending moment and spar utilisation", "figure")
     fw = dict(PTCH2SRV_RMAX_UP=round(math.degrees(r["q_max_rad_s"])), PTCH2SRV_RMAX_DN=round(math.degrees(r["q_max_rad_s"])),
               AIRSPEED_MAX_cap=round(env["v_ne"] * 0.88, 1), VA=round(r["VA"], 1))
-    data = dict(VA=r["VA"], Vs=r["Vs"], n_design=r["n_design"], n_land=r["n_land"], load_factors=r["load_factors"],
+    sens = diag.get("gust_sensitivity_cs_vla") or {}
+    if sens:
+        ctx.gates.append(dict(stage="structures", check="envelope: gust load factors at CS-VLA 333(c) gust velocities (sensitivity, not a requirement)",
+                              value=round(max(sens.values()), 2), limit=None, kind="info", status="INFO", unit="",
+                              note="; ".join(f"{k} n={v:.2f}" for k, v in sens.items()), drivers=["/envelope/gust_u_de"]))
+    data = dict(VA=r["VA"], Vs=r["Vs"], gust_sensitivity_cs_vla=sens, n_design=r["n_design"], n_land=r["n_land"], load_factors=r["load_factors"],
                 f_bend_Hz=r["f_bend"], f_tors_Hz=r["f_tors"], V_div=r["V_div"], V_rev=r["V_rev"], firmware=fw,
                 tip_deflection_mm=sp["deflection_design"][-1] * 1000)
     summ = dict(VA=round(r["VA"], 1), n_design=round(r["n_design"], 2), f_bend_Hz=round(r["f_bend"], 1),

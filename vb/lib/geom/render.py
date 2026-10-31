@@ -27,7 +27,7 @@ from PIL import Image, ImageDraw, ImageFont
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-DEFAULT_BPY_PY = os.environ.get("VB_BPY_PYTHON", "/home/claude/venvs/bpy/bin/python")
+DEFAULT_BPY_PY = os.environ.get("VB_BPY_PYTHON", "")   # only for --backend bpy (python with the bpy module); not installed by install.sh
 
 
 # --------------------------------------------------------------------------- helpers

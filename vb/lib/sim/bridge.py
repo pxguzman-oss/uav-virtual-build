@@ -75,7 +75,9 @@ class PropMap:
         self.inertia = p.get("inertia_kgm2", 2e-5)
 
     def coeffs(self, J, rpm):
-        J = min(max(J, -0.2), 1.6)
+        # review m5: linear extrapolation only a little past the table (windmill point is ~ the last J of APC tables);
+        # beyond J_max + 0.15 the coefficients are held (no runaway negative CT/CP)
+        J = min(max(J, -0.2), self.J[-1] + 0.15)
         rows = self.rpm
         if len(rows) == 1 or rpm <= rows[0]:
             i0, i1, f = 0, 0, 0.0

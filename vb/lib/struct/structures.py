@@ -120,9 +120,23 @@ def run(plan, variant, out_dir, prop=None, M_auw=None, aero=None):
     diag["vn"] = dict(Vs=Vs, VA=VA, a3d=a3d, Kg=Kg, mu=mu, clmax=clmax, clmax_source=clmax_src, WS=W / S, n_land=n_land, cases=cases,
                       V=np.linspace(0, env["v_ne"], 60).tolist(), n_stall=[n_stall(v) for v in np.linspace(0, env["v_ne"], 60)],
                       n_gust_c=[n_gust(v, gust.get("at_v_cruise", 7.5)) for v in np.linspace(0, env["v_ne"], 60)],
-                      n_gust_ne=[n_gust(v, gust.get("at_v_ne", 5.0)) for v in np.linspace(0, env["v_ne"], 60)])
+                      n_gust_ne=[n_gust(v, gust.get("at_v_ne", 5.0)) for v in np.linspace(0, env["v_ne"], 60)],
+                      U_c=gust.get("at_v_cruise", 7.5), U_ne=gust.get("at_v_ne", 5.0))
     gate("envelope", "gust load factor @VNE <= n_limit (else lower VNE)", cases["gust @VNE (stall-capped)"],
          env["n_limit_pos"], "<=", "WARN")
+    # negative (down) gusts (review m3): n = 1 - dn, capped by the negative stall boundary (-0.7 CLmax)
+    n_neg_lim = env.get("n_limit_neg", -1.5)
+    U_c, U_ne = gust.get("at_v_cruise", 7.5), gust.get("at_v_ne", 5.0)
+    neg = {"down gust @Vc (stall-capped)": max(2 - n_gust(env["v_cruise"], U_c), -0.7 * n_stall(env["v_cruise"])),
+           "down gust @VNE (stall-capped)": max(2 - n_gust(env["v_ne"], U_ne), -0.7 * n_stall(env["v_ne"]))}
+    cases.update(neg)
+    for k_, v_ in neg.items():
+        gate("envelope", f"{k_} load factor >= n_limit_neg {n_neg_lim}", v_, n_neg_lim, ">=", "WARN",
+             note=f"gust {U_c if 'Vc' in k_ else U_ne} m/s (team value); printed joints / V-tail carry negative loads too")
+    # sensitivity at the CS-VLA 333(c) gust velocities (15.24 m/s at VC, 7.62 m/s at VD; here VD -> VNE)
+    sens = {"CS-VLA +15.24 @Vc": n_gust(env["v_cruise"], 15.24), "CS-VLA -15.24 @Vc": 2 - n_gust(env["v_cruise"], 15.24),
+            "CS-VLA +7.62 @VNE": n_gust(env["v_ne"], 7.62), "CS-VLA -7.62 @VNE": 2 - n_gust(env["v_ne"], 7.62)}
+    diag["gust_sensitivity_cs_vla"] = sens
     q_max = (env["n_limit_pos"] - 1) * G / env["v_ne"]
     print(f"      -> firmware: limit pitch rate to {math.degrees(q_max):.0f} deg/s at VNE "
           f"(n = 1 + V q / g); keep ARSPD_FBW_MAX <= {env['v_ne']*0.88:.0f} m/s; manual-mode full elevator above "
@@ -373,8 +387,12 @@ def run(plan, variant, out_dir, prop=None, M_auw=None, aero=None):
     print(f" 6. thermal: hottest case '{hot.get('name')}' skin ~{T_skin:.0f} C")
     for k, m in mats.items():
         if m["kind"] == "printed_polymer" and "tg_C" in m:
-            gate("thermal", f"{k}: Tg - 10 C margin vs skin temp [C]", m["tg_C"] - 10, T_skin, ">=", "FAIL",
-                 note="(creep/warp of skins & spar sockets; use LW-ASA/ASA/PETG or white paint + shade)")
+            src = ((plan.get("_sourced") or {}).get(f"/environment_cases/{hot.get('name')}/solar_heating_dT_C") or {}).get("source", "")
+            gate("thermal", f"{k}: Tg - 10 C margin vs skin temp [C] (scenario: '{hot.get('name')}' ground soak in sun)", m["tg_C"] - 10,
+                 T_skin, ">=", "FAIL",
+                 note=f"ambient {hot.get('temperature_C')} C + solar dT {hot.get('solar_heating_dT_C')} C ({src or 'no source'}); parked/transported "
+                      "in sun is the real risk, in flight convection keeps the skin nearer ambient; creep/warp of skins and spar sockets "
+                      "-> LW-ASA/ASA/PETG or white paint + shade")
 
     out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
     fn = out / f"structures_{variant or 'base'}.json"
