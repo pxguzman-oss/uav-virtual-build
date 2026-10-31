@@ -1,0 +1,18 @@
+# Example calibration file (ILLUSTRATIVE NUMBERS - replace with your bench / flight measurements).
+#   python run.py examples/stork_phase0.buildplan.yaml --calibration examples/stork_calibration_example.yaml
+# overrides: merged into the plan exactly like a variant overlay (arrays of named objects merge by name)
+# measured : compared with the model's predictions in the report (acceptance bands from PIPELINE_DESIGN 8)
+date: "2026-11-15"
+notes: "C0 weigh + C2 thrust stand (EXAMPLE VALUES)"
+overrides:
+  components:
+    - {name: fuselage_print, mass: {value: 0.205, source: "measured 2026-11-15 scale"}}
+    - {name: wing_print_R,   mass: {value: 0.162, source: "measured 2026-11-15 scale"}}
+  propulsion:
+    units:
+      - {name: cruise, prop: {ct_scale: 0.88}}
+measured:
+  auw_kg: 1.78
+  cg_x_mm: 49.0
+  static_thrust_g_full: 1600
+  static_current_A_full: 31.0

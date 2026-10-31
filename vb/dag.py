@@ -40,15 +40,18 @@ def read_result(d):
 
 class Runner:
     def __init__(self, plan_path, variant=None, fidelity="standard", out=None, force=(), only=None, until=None,
-                 quiet=False):
+                 quiet=False, calibration=None):
         self.plan_path = Path(plan_path).resolve()
         self.raw = P.load_raw(self.plan_path)
         self.variant = variant or "base"
         self.fidelity = fidelity
         self.plan = P.resolve(self.raw, None if self.variant == "base" else self.variant)
+        self.calibration = str(Path(calibration).resolve()) if calibration else None
+        if self.calibration:
+            self.plan = P.apply_calibration(self.plan, self.calibration)
         self.plan_slug = P.slug(self.plan["meta"]["name"])
         self.out_root = Path(out or ROOT / "out").resolve()
-        self.run_dir = self.out_root / self.plan_slug / self.variant
+        self.run_dir = self.out_root / self.plan_slug / (self.variant + ("_calibrated" if self.calibration else ""))
         self.cache_dir = self.out_root / self.plan_slug / "_cache"
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.quiet = quiet
@@ -117,6 +120,7 @@ class Runner:
             shutil.rmtree(sdir)
         sdir.mkdir(parents=True)
         spec = dict(stage=name, key=key, plan_path=str(self.plan_path), variant=self.variant, fidelity=self.fidelity,
+                    calibration=self.calibration,
                     stage_dir=str(sdir), run_dir=str(self.run_dir), out_root=str(self.out_root))
         spec_f = sdir / "spec.json"
         spec_f.write_text(json.dumps(spec, indent=1))

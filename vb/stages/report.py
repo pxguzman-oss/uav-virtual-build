@@ -287,7 +287,48 @@ def run(ctx):
             return "F1 stall test"
         return "measure / confirm from CAD"
 
+    # ---- calibration: predicted vs measured --------------------------------------------------------
+    meas = (plan.get("calibration") or {}).get("measured") or {}
+    calrows, model_err = [], []
+    if meas:
+        md, pd_, ad_, sd_, sid = ((R.get(s) or {}).get("data", {}) for s in ("mass", "propulsion", "aero_lowfi", "structures", "sitl"))
+        pv = {}
+        if md:
+            pv["auw_kg"] = (md["mass_kg"], ("rel", 0.02)); pv["cg_x_mm"] = (1000 * md["cg_m"][0], ("abs", 2.0))
+        if pd_:
+            st = pd_["cruise_unit"]["static_wot"]["full"]
+            pv["static_thrust_g_full"] = (st["thrust_g"], ("rel", 0.05)); pv["static_current_A_full"] = (st["I_bus_total"], ("rel", 0.07))
+            pv["cruise_current_A"] = (pd_["cruise_unit"]["cruise"]["I_bus_total"], ("rel", 0.15))
+            ht = [x for x in pd_.get("vtol", {}).get("hover_table", []) if x.get("is_plan_auw")]
+            if ht:
+                pv["hover_throttle"] = (ht[0]["duty"], ("abs", 0.05))
+        if ad_:
+            pv["v_stall"] = (ad_["V_stall"], ("rel", 0.10)); pv["cd0"] = (ad_["CD0"], ("rel", 0.15))
+        if sd_:
+            pv["f_bend_Hz"] = (sd_["f_bend_Hz"], ("rel", 0.15)); pv["f_tors_Hz"] = (sd_["f_tors_Hz"], ("rel", 0.15))
+        if sid and sid.get("energy"):
+            pv["wh_per_km"] = (sid["energy"]["sitl_Wh_per_km"], ("rel", 0.10))
+        for k, mv in meas.items():
+            if k not in pv:
+                calrows.append([k, "-", fmt(mv), "-", "no prediction"])
+                continue
+            p_, (kind, tol) = pv[k]
+            err = (mv - p_) / p_ if kind == "rel" else mv - p_
+            ok = abs(err) <= tol
+            calrows.append([k, fmt(p_), fmt(mv), (f"{100*err:+.1f} %" if kind == "rel" else f"{err:+.3g}") + f" (band {tol*100 if kind == 'rel' else tol:g}{'%' if kind == 'rel' else ''})",
+                            "OK" if ok else "MODEL ERROR"])
+            if not ok:
+                model_err.append(dict(check=f"model error: {k} predicted {fmt(p_)} vs measured {fmt(mv)}", status="WARN", value=err,
+                                      limit=tol, note="outside the calibration acceptance band", drivers=[]))
+        bad_gates_extra = [("calibration", g) for g in model_err]
+    else:
+        bad_gates_extra = []
+
     # ---- risk register -------------------------------------------------------------------------
+    bad_gates = bad_gates + bad_gates_extra
+    n_warn += len(model_err)
+    if model_err and overall == "GO":
+        overall = "CONDITIONAL GO"
     risks = []
     for s, g in bad_gates:
         L = 4 if g["status"] == "FAIL" else 3
@@ -480,6 +521,9 @@ def run(ctx):
     D.h(2, "ArduPilot outputs", "params")
     if (out / "derived.param").exists():
         D.pre((out / "derived_vs_defaults.txt").read_text()[:6000])
+    if calrows:
+        D.h(2, f"Calibration status: predicted vs measured ({(plan.get('calibration') or {}).get('date', '')})", "calstatus")
+        D.table(["quantity", "predicted", "measured", "error", "status"], calrows, status_col=4)
     D.h(2, "Calibration needed (close the loop after the first build)", "calibration")
     pred = {}
     if m:

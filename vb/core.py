@@ -53,7 +53,8 @@ class Ctx:
         self.dir = Path(spec["stage_dir"])
         self.run_dir = Path(spec["run_dir"])          # out/<plan>/<variant>
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.plan = P.load(self.plan_path, self.variant if self.variant != "base" else None)
+        self.calibration = spec.get("calibration")
+        self.plan = P.load(self.plan_path, self.variant if self.variant != "base" else None, calibration=self.calibration)
         self.raw_plan = P.load_raw(self.plan_path)
         self.gates: list[dict] = []
         self.notes: list[str] = []

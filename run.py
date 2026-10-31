@@ -17,6 +17,29 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
+
+def _ensure_env():
+    """Re-exec with the project venv (setup/paths.env VB_VENV or ./.venv) if this interpreter lacks the packages."""
+    try:
+        import numpy, yaml, jsonschema  # noqa: F401
+        return
+    except ImportError:
+        pass
+    import os
+    venv = os.environ.get("VB_VENV")
+    pe = ROOT / "setup" / "paths.env"
+    if not venv and pe.exists():
+        for line in pe.read_text().splitlines():
+            if line.startswith("VB_VENV="):
+                venv = line.split("=", 1)[1].strip()
+    for cand in [venv, str(ROOT / ".venv")]:
+        if cand and Path(cand, "bin", "python").exists() and Path(sys.executable).resolve() != Path(cand, "bin", "python").resolve():
+            os.execv(str(Path(cand, "bin", "python")), [str(Path(cand, "bin", "python"))] + sys.argv)
+    sys.exit("python packages missing: run setup/install.sh (or activate the venv)")
+
+
+_ensure_env()
+
 from vb.dag import Runner  # noqa: E402
 from vb.stages import NAMES  # noqa: E402
 
@@ -32,8 +55,10 @@ def main(argv=None):
                     help="ignore the cache for these stages and everything downstream of them")
     ap.add_argument("--out", default=str(ROOT / "out"))
     ap.add_argument("--quiet", action="store_true", help="do not echo stage logs (they are in <stage>/stage.log)")
+    ap.add_argument("--calibration", default=None,
+                    help="calibration YAML (measured overrides + measured values) -> <variant>_calibrated run + predicted-vs-measured table")
     a = ap.parse_args(argv)
-    r = Runner(a.plan, a.variant, a.fidelity, a.out, a.force, a.only, a.until, a.quiet)
+    r = Runner(a.plan, a.variant, a.fidelity, a.out, a.force, a.only, a.until, a.quiet, a.calibration)
     r.run()
     rep = r.run_dir / "report" / "result.json"
     if rep.exists():
@@ -41,7 +66,7 @@ def main(argv=None):
         v = d.get("overall")
         if v:
             print(f"OVERALL: {v}")
-            return 0 if v == "GO" else 2
+            return 0 if v in ("GO", "CONDITIONAL GO") else 2
     return 0
 
 

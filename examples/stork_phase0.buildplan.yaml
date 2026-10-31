@@ -277,3 +277,23 @@ variants:
     avionics:
       autopilot: {frame_class: quadplane}
       params: {AIRSPEED_MIN: 12}     # heavier VTOL airframe stalls ~1 m/s faster
+
+  # Demo of real-part import: synthetic, deliberately messy STLs (metres / inches / flipped normals /
+  # holes) made from the parametric model by tools/make_test_stls.py. Replace with your print STLs.
+  stl_demo:
+    meta: {phase: "STL import demo (synthetic messy STL pack)"}
+    airframe:
+      cad_import:
+        folder: stl_demo                # relative to this plan file
+        replace_structure: true         # parametric printed skins are replaced; tubes/components stay
+        oml_method: union               # falls back to a voxel wrap if the parts do not union cleanly
+        voxel_pitch: 2.0
+        defaults: {material: lw_pla_230C, mass_model: shell, wall_mm: 0.45, infill: 0.04, group: printed}
+        parts:
+          - {name: wing_R, file: wing_R.stl, expected_extent_mm: 800}
+          - {name: wing_L, file: wing_R.stl, expected_extent_mm: 800, transform: {mirror: y}}
+          - {name: fuselage_nose, file: fuselage_nose.stl, wall_mm: 0.8}
+          - {name: fuselage_mid,  file: fuselage_mid.stl,  wall_mm: 0.8}
+          - {name: fuselage_tail, file: fuselage_tail.stl, wall_mm: 0.8}
+          - {name: vtail_R, file: vtail_R.stl, units: in, transform: {translate: [440, 0, 14]}}
+          - {name: vtail_L, file: vtail_R.stl, expected_extent_mm: 250, transform: {mirror: y, translate: [440, 0, 14]}}

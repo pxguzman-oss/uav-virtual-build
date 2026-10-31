@@ -86,13 +86,24 @@ def resolve(raw, variant=None):
     return plan
 
 
-def load(path, variant=None, validate_schema=True):
+def apply_calibration(plan, cal_path):
+    """Calibration file (YAML): {date, overrides: <overlay merged like a variant>, measured: {...}}."""
+    cal = yaml.safe_load(Path(cal_path).read_text()) or {}
+    plan = _merge(plan, cal.get("overrides") or {})
+    plan["calibration"] = dict(file=str(cal_path), date=str(cal.get("date", "")), measured=cal.get("measured") or {},
+                               notes=cal.get("notes", ""))
+    return plan
+
+
+def load(path, variant=None, validate_schema=True, calibration=None):
     raw = load_raw(path)
     if validate_schema:
         errs = validate(raw)
         if errs:
             raise ValueError("schema errors:\n  " + "\n  ".join(errs[:20]))
     plan = resolve(raw, variant)
+    if calibration:
+        plan = apply_calibration(plan, calibration)
     if validate_schema:
         errs = validate(plan)
         if errs:

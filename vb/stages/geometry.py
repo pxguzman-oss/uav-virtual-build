@@ -37,8 +37,12 @@ def run(ctx):
     imp = plan["airframe"].get("cad_import")
     if imp:
         import import_stl
-        asm = dict(imp)
+        asm = json.loads(json.dumps(imp))
         asm["base_plan"] = str(d / "geom_plan.yaml")
+        dm = (asm.get("defaults") or {}).get("material")
+        if not dm or dm not in g["materials"]:
+            skin = next((s["printed"]["material"] for s in g["airframe"]["surfaces"]), None)
+            asm.setdefault("defaults", {})["material"] = skin
         folder = asm.get("folder")
         if folder and not os.path.isabs(folder):
             asm["folder"] = str((ctx.plan_path.parent / folder).resolve())
@@ -48,7 +52,8 @@ def run(ctx):
         (d / "cad_import.yaml").write_text(yaml.safe_dump(asm, sort_keys=False))
         rc = import_stl.main([str(d / "cad_import.yaml"), "--out", str(d)])
         man, parts = manifest.read(str(d))
-        oml = G.boolean([p.mesh for p in parts if p.in_oml and p.mesh is not None], "union")
+        import trimesh
+        oml = trimesh.load(str(d / man["oml"]), force="mesh")       # importer's OML (union or voxel wrap)
         info = man.get("surfaces") and {"surfaces": man["surfaces"]} or {"surfaces": {}}
         ctx.note(f"geometry from CAD import ({len(parts)} parts, importer rc={rc})")
     else:
