@@ -1,0 +1,26 @@
+# QuadPlane add-on for the Stork VTOL variant (load after stork_sitl.parm and the generated model parm)
+Q_ENABLE        1
+Q_FRAME_CLASS   1
+Q_FRAME_TYPE    1
+Q_M_PWM_TYPE    0
+Q_M_PWM_MIN     1000
+Q_M_PWM_MAX     2000
+Q_M_SPIN_ARM    0.08
+Q_M_SPIN_MIN    0.12
+Q_M_THST_HOVER  0.40
+Q_M_THST_EXPO   0.55
+Q_ASSIST_SPEED  11
+Q_TRANSITION_MS 4000
+Q_RTL_MODE      1
+Q_OPTIONS       0
+Q_WVANE_ENABLE  0
+Q_GUIDED_MODE   1
+Q_TRAN_PIT_MAX  3
+SCHED_LOOP_RATE 300
+# lift motors on 9-12 (from generated parm); camera moved to 13
+SERVO9_FUNCTION 33
+SERVO10_FUNCTION 34
+SERVO11_FUNCTION 35
+SERVO12_FUNCTION 36
+SERVO13_FUNCTION 10
+BATT_LOW_VOLT   13.4

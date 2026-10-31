@@ -1,0 +1,10 @@
+# Mapping for ArduPilot built-in SIM_Plane "plane-vtail" decoder (fallback backend only)
+SERVO2_FUNCTION 80
+SERVO4_FUNCTION 79
+SERVO2_REVERSED 1
+SERVO5_FUNCTION 0
+# SIM_Plane has no hand-launch model: take off from the ground roll instead
+TKOFF_THR_MINACC 0
+TKOFF_THR_MINSPD 0
+TKOFF_THR_DELAY 0
+SIM_BATT_VOLTAGE 16.8

@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""
+run_tests.py - automated, headless ArduPlane SITL test matrix for the Stork (JSBSim bridge).
+
+  run_tests.py mission   [--l1 15] [--wind 6,270] [--turb 3,6] [--name X]
+  run_tests.py l1sweep   [--periods 10,13,15,18,22]
+  run_tests.py cruise    [--speeds 10,11,...]
+  run_tests.py stall
+  run_tests.py launch    [--accel 25 --dur 0.45]   (hand-launch detection / weak throw)
+  run_tests.py fs_rc | fs_gcs | fs_batt
+  run_tests.py all
+
+Every run writes results/<name>/{truth.csv, logs/00000001.BIN, flight.tlog, events.json, ...}
+and is then analysed by analyze.py (metrics.json + PNG plots).
+"""
+import argparse, json, math, os, sys, time, traceback
+from pymavlink import mavutil
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sitl import SitlRun, ll_offset, ROOT
+import course
+import analyze
+
+M = mavutil.mavlink
+HOME = (-35.363262, 149.165237, 584.0, 0.0)
+ALT = 60  # survey altitude AGL
+
+
+def home_str():
+    return ",".join(str(x) for x in HOME)
+
+
+def takeoff_items(alt=40, pitch=12):
+    return [dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=HOME[0], lon=HOME[1], alt=0),       # 0 home
+            dict(cmd=M.MAV_CMD_NAV_TAKEOFF, p1=pitch, alt=alt)]                       # 1
+
+
+def canal_items(spacing=25.0, cam_dist=20.0, alt=ALT, comp_l1=None):
+    cl = course.centreline()
+    wps, L = course.waypoints(cl, spacing)
+    if comp_l1:
+        wps = course.compensate(wps, cl, comp_l1)
+    items = takeoff_items()
+    items.append(dict(cmd=M.MAV_CMD_DO_SET_CAM_TRIGG_DIST, p1=cam_dist, p3=1))
+    first = len(items)
+    for n, e in wps:
+        lat, lon = ll_offset(HOME[0], HOME[1], n, e)
+        items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=lat, lon=lon, alt=alt))
+    last = len(items) - 1
+    items.append(dict(cmd=M.MAV_CMD_DO_SET_CAM_TRIGG_DIST, p1=0))
+    lat, lon = ll_offset(HOME[0], HOME[1], wps[-1][0], wps[-1][1])
+    items.append(dict(cmd=M.MAV_CMD_NAV_LOITER_TURNS, p1=2, p3=80, lat=lat, lon=lon, alt=alt))
+    items.append(dict(cmd=M.MAV_CMD_NAV_RETURN_TO_LAUNCH))
+    meta = dict(first_wp=first, last_wp=last, course_len_m=L, n_wp=len(wps), spacing=spacing)
+    return items, meta, cl
+
+
+def launch_and_climb(s, items, alt=40):
+    s.wait_ready()
+    s.upload_mission(items)
+    s.set_mode("AUTO")
+    s.arm()
+    s.sleep(2)
+    s.launch()
+    s.wait(lambda: s.msgs.get("GLOBAL_POSITION_INT") and s.msgs["GLOBAL_POSITION_INT"].relative_alt > (alt - 5) * 1000,
+           timeout=120)
+    s.event("takeoff_alt_reached")
+
+
+def finish(s, name, kind, meta=None):
+    s.stop()
+    meta = meta or {}
+    meta.update(kind=kind, wall_s=s.wall_s, sim_s=s.t)
+    json.dump(meta, open(os.path.join(s.outdir, "meta.json"), "w"), indent=1)
+    try:
+        res = analyze.analyze_run(s.outdir)
+    except Exception:
+        traceback.print_exc()
+        res = {}
+    print(f"== {name}: sim {s.t:.0f}s in wall {s.wall_s:.0f}s (x{s.t / max(s.wall_s, 1):.1f})")
+    return res
+
+
+# ----------------------------------------------------------------------------- scenarios
+def t_mission(a, name=None, l1=None, wind=None, turb=None, speedup=100):
+    name = name or a.name or "mission"
+    params = {}
+    if l1 or a.l1:
+        params["NAVL1_PERIOD"] = l1 or a.l1
+    bargs = []
+    w = wind or a.wind
+    tb = turb or a.turb
+    if w:
+        bargs += ["--wind", w]
+    if tb:
+        bargs += ["--turb", tb]
+    comp = None
+    if a.compensate:
+        per = params.get("NAVL1_PERIOD", 15)
+        comp = 0.75 * per * 13.0 / math.pi   # L1 distance = damping*period*V/pi
+    items, meta, cl = canal_items(spacing=a.spacing, comp_l1=comp)
+    meta.update(params=params, wind=w, turb=tb, compensated_L1_m=comp)
+    extra = []
+    if a.backend == "simplane":
+        extra = [os.path.join(ROOT, "params", "simplane_vtail.parm")]
+    meta["backend"] = a.backend
+    s = SitlRun(os.path.join(ROOT, "results", name), params=params, bridge_args=bargs, speedup=speedup, home=home_str(),
+                rate_hz=a.rate if a.backend == "jsbsim" else None, backend=a.backend, extra_parm_files=extra)
+    s.start()
+    try:
+        launch_and_climb(s, items)
+        s.wait(lambda: s.mission_seq >= meta["first_wp"] + 2, timeout=200)
+        s.event("course_start")
+        s.wait(lambda: s.mission_seq > meta["last_wp"], timeout=1200)
+        s.event("course_end")
+        s.wait(lambda: s.mode == "RTL", timeout=600)
+        s.event("rtl")
+        s.sleep(90)
+    except Exception as ex:
+        traceback.print_exc()
+        meta["error"] = str(ex)
+    return finish(s, name, "mission", meta)
+
+
+def t_l1sweep(a):
+    out = {}
+    for p in [float(x) for x in a.periods.split(",")]:
+        out[p] = t_mission(a, name=f"l1_{p:g}" + (f"_{a.name}" if a.name else ""), l1=p)
+    return out
+
+
+def t_cruise(a):
+    name = a.name or "cruise_sweep"
+    items = takeoff_items(alt=60)
+    far_lat, far_lon = ll_offset(HOME[0], HOME[1], 30000, 0)
+    items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=far_lat, lon=far_lon, alt=60))
+    s = SitlRun(os.path.join(ROOT, "results", name), params={"AIRSPEED_MAX": 22, "AIRSPEED_MIN": 9}, home=home_str())
+    s.start()
+    meta = {"segments": []}
+    try:
+        launch_and_climb(s, items, alt=55)
+        s.sleep(20)
+        for v in [float(x) for x in a.speeds.split(",")]:
+            s.change_speed(v)
+            s.event("speed", v=v)
+            t0 = s.t
+            s.sleep(a.settle)
+            t1 = s.t
+            s.sleep(a.hold)
+            meta["segments"].append(dict(v=v, t_start=t1, t_end=s.t, t_cmd=t0))
+    except Exception as ex:
+        traceback.print_exc(); meta["error"] = str(ex)
+    return finish(s, name, "cruise", meta)
+
+
+def t_stall(a):
+    name = a.name or "stall"
+    items = takeoff_items(alt=80)
+    far_lat, far_lon = ll_offset(HOME[0], HOME[1], 20000, 0)
+    items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=far_lat, lon=far_lon, alt=100))
+    s = SitlRun(os.path.join(ROOT, "results", name), params={"RC_OVERRIDE_TIME": -1, "STALL_PREVENTION": 0},
+                home=home_str())
+    s.start()
+    meta = {"stalls": []}
+    try:
+        launch_and_climb(s, items, alt=75)
+        s.sleep(25)
+        for rep in range(2):
+            # FBWA, idle, wings level, ramp pitch stick to full back over 12 s
+            s.rc_override(rc1=1500, rc2=1500, rc3=1000, rc4=1500)
+            s.set_mode("FBWA")
+            s.sleep(3)
+            s.event("stall_entry", rep=rep)
+            t0 = s.t
+            while s.t - t0 < 15:
+                f = min((s.t - t0) / 12.0, 1.0)
+                s.rc_override(rc1=1500, rc2=int(1500 + 500 * f), rc3=1000, rc4=1500)  # RC2 high = nose up (verified: low PWM dived)
+                time.sleep(0.01)
+            s.event("stall_hold_end", rep=rep)
+            meta["stalls"].append(dict(t0=t0, t1=s.t))
+            s.rc_override(rc1=1500, rc2=1500, rc3=1000, rc4=1500)
+            s.sleep(2)
+            s.rc_override(rc1=0, rc2=0, rc3=0, rc4=0)  # release overrides
+            s.set_mode("AUTO")
+            s.sleep(40)
+    except Exception as ex:
+        traceback.print_exc(); meta["error"] = str(ex)
+    return finish(s, name, "stall", meta)
+
+
+def t_launch(a):
+    name = a.name or f"launch_a{a.accel:g}_d{a.dur:g}"
+    items = takeoff_items(alt=40)
+    items.append(dict(cmd=M.MAV_CMD_NAV_LOITER_UNLIM, lat=HOME[0] + 0.002, lon=HOME[1], alt=40))
+    # override launch strength through a temp model copy
+    mpath = os.path.join(ROOT, "generated", "stork_p0", "stork_p0.json")
+    s = SitlRun(os.path.join(ROOT, "results", name), home=home_str(),
+                bridge_args=[], log_hz=100)
+    # patch launch params via bridge model copy
+    m = json.load(open(mpath))
+    m["launch"]["accel_mps2"] = a.accel
+    m["launch"]["duration_s"] = a.dur
+    os.makedirs(os.path.join(ROOT, "generated", "stork_p0_launch"), exist_ok=True)
+    meta = dict(accel=a.accel, dur=a.dur, release_speed_est=a.accel * a.dur)
+    s.model = "stork_p0"
+    tmp = os.path.join(ROOT, "results", name + "_model.json")
+    json.dump(m, open(tmp, "w"))
+    s.bridge_args = ["--model", tmp]  # later --model wins in argparse
+    s.start()
+    try:
+        s.wait_ready()
+        s.upload_mission(items)
+        s.set_mode("AUTO")
+        s.arm()
+        s.sleep(3)
+        s.launch()
+        s.sleep(40)
+    except Exception as ex:
+        traceback.print_exc(); meta["error"] = str(ex)
+    return finish(s, name, "launch", meta)
+
+
+def t_failsafe(a, kind):
+    name = a.name or f"fs_{kind}"
+    items, meta, cl = canal_items(spacing=a.spacing)
+    params = {}
+    bargs = []
+    if kind == "gcs":
+        params["FS_GCS_ENABL"] = 1
+    if kind == "batt":
+        bargs = ["--soc", str(a.soc)]
+        # time-box: raise the low-voltage threshold so the (sag-compensated) voltage trips it within minutes
+        params["BATT_LOW_VOLT"] = 13.95
+    s = SitlRun(os.path.join(ROOT, "results", name), params=params, bridge_args=bargs, home=home_str())
+    s.start()
+    meta.update(fs=kind)
+    try:
+        launch_and_climb(s, items)
+        s.wait(lambda: s.mission_seq >= meta["first_wp"] + 10, timeout=300)
+        if kind == "rc":
+            s.set_param("SIM_RC_FAIL", 1)
+            s.event("rc_lost")
+        elif kind == "gcs":
+            s._hb = False
+            s.event("gcs_lost")
+        if kind in ("rc", "gcs"):
+            s.sleep(60)
+            if kind == "rc":
+                s.set_param("SIM_RC_FAIL", 0)
+            else:
+                s._hb = True
+            s.event(f"{kind}_restored")
+            s.sleep(30)
+        else:
+            s.wait(lambda: any("Battery" in t or "battery" in t for _, t in s.statustext), timeout=1500)
+            s.event("batt_fs_text", text=[t for _, t in s.statustext if "atter" in t][-1])
+            s.sleep(90)
+    except Exception as ex:
+        traceback.print_exc(); meta["error"] = str(ex)
+    return finish(s, name, f"fs_{kind}", meta)
+
+
+def t_vtol(a):
+    """QuadPlane: VTOL takeoff from the ground, transition, 4-leg box, VTOL land at home."""
+    name = a.name or "vtol"
+    items = [dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=HOME[0], lon=HOME[1], alt=0),
+             dict(cmd=M.MAV_CMD_NAV_VTOL_TAKEOFF, alt=30)]
+    for dn, de in [(400, 0), (400, 300), (0, 300), (-100, 0)]:
+        lat, lon = ll_offset(HOME[0], HOME[1], dn, de)
+        items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=lat, lon=lon, alt=50))
+    items.append(dict(cmd=M.MAV_CMD_NAV_VTOL_LAND, lat=HOME[0], lon=HOME[1], alt=0))
+    bargs = ["--start", "ground"] + (["--wind", a.wind] if a.wind else [])
+    s = SitlRun(os.path.join(ROOT, "results", name), model="stork_vtol", rate_hz=1200, bridge_args=bargs,
+                extra_parm_files=[os.path.join(ROOT, "params", "stork_vtol_sitl.parm")], home=home_str())
+    meta = dict(model="stork_vtol", n_items=len(items))
+    s.start()
+    try:
+        s.wait_ready()
+        s.upload_mission(items)
+        s.set_mode("AUTO")
+        s.arm()
+        s.wait(lambda: s.mission_seq >= 2, timeout=120)
+        s.event("vtol_takeoff_done")
+        s.wait(lambda: s.mission_seq >= len(items) - 1, timeout=900)
+        s.event("vtol_land_start")
+        s.wait(lambda: not s.armed, timeout=300)
+        s.event("disarmed")
+        s.sleep(3)
+    except Exception as ex:
+        traceback.print_exc(); meta["error"] = str(ex)
+    return finish(s, name, "vtol", meta)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("test")
+    ap.add_argument("--name", default=None)
+    ap.add_argument("--l1", type=float, default=None)
+    ap.add_argument("--wind", default=None)
+    ap.add_argument("--turb", default=None)
+    ap.add_argument("--spacing", type=float, default=25.0)
+    ap.add_argument("--periods", default="10,13,15,18,22")
+    ap.add_argument("--speeds", default="10,11,12,13,14,15,16,18,20")
+    ap.add_argument("--settle", type=float, default=25)
+    ap.add_argument("--hold", type=float, default=25)
+    ap.add_argument("--accel", type=float, default=25)
+    ap.add_argument("--dur", type=float, default=0.45)
+    ap.add_argument("--soc", type=float, default=0.22)
+    ap.add_argument("--compensate", action="store_true", help="pre-distort arc waypoints outward by L1^2/2R")
+    ap.add_argument("--backend", choices=["jsbsim", "simplane"], default="jsbsim")
+    ap.add_argument("--rate", type=int, default=400, help="SIM_RATE_HZ (physics/IMU rate)")
+    a = ap.parse_args()
+    t = a.test
+    if t == "mission":
+        r = t_mission(a)
+    elif t == "l1sweep":
+        r = t_l1sweep(a)
+    elif t == "cruise":
+        r = t_cruise(a)
+    elif t == "stall":
+        r = t_stall(a)
+    elif t == "launch":
+        r = t_launch(a)
+    elif t == "vtol":
+        r = t_vtol(a)
+    elif t.startswith("fs_"):
+        r = t_failsafe(a, t[3:])
+    else:
+        raise SystemExit("unknown test")
+    print(json.dumps(r, indent=1, default=str)[:4000])
+
+
+if __name__ == "__main__":
+    main()

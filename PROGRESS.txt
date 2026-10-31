@@ -1,0 +1,9 @@
+VBUILD PROGRESS LOG  (update after every milestone; newest at bottom)
+=====================================================================
+Task: integrate research prototypes (struct/geom/aero/sim under /home/claude/research) into one
+DAG pipeline at /home/claude/vbuild (run.py + vb/ package), one build plan YAML -> report.
+
+[M0] skeleton created; prototype code copied into vb/lib/{geom,aero,sim,struct} (geom's own
+     'vbuild' package renamed 'geomkit'); unified venv /home/claude/venvs/vbuild being built from
+     setup/requirements.txt (log /tmp/venv_install.log).
+NOTE: aero/cases/mesh_l67 simpleFoam (alpha 8) was running at start - never touch it.

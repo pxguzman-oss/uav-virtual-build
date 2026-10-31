@@ -1,0 +1,220 @@
+# Build plan: Flightory Stork, Phase 0 (fixed-wing, pusher, hand launch, belly land)
+# + VTOL variant overlay.  Conforms to buildplan_schema.yaml.
+# Numbers tagged `source: estimate` are placeholders until weighed/measured;
+# the pipeline flags them in the report's "soft inputs" table.
+meta:
+  name: Stork Phase 0
+  revision: "0.3"
+  phase: "Phase 0 - proof of concept"
+  base_design: "Flightory Stork (STORK-USER-MANUAL, Dec 2025)"
+  references:
+    - https://flightory.com/wp-content/uploads/2025/12/STORK-USER-MANUAL.pdf
+  notes: >
+    Spar layout inferred from the manual's accessories list (10x1000 main,
+    8x1000 secondary, 2x 6x500 wing spars). Tube wall thicknesses are NOT
+    in the manual: 1 mm wall assumed (10x8, 8x6, 6x4). Spanwise placement of
+    the 6 mm tubes (outboard panels, 190 mm overlap) is an ASSUMPTION - check
+    against the STLs and update `spars` before trusting the margins.
+
+frames: {datum: "wing root LE, centreline", axes: "x aft, y right, z up"}
+
+airframe:
+  lifting_surfaces:
+    - name: wing
+      kind: wing
+      span: 1.62
+      area: 0.31
+      root_chord: 0.230
+      tip_chord: 0.153          # from S = (cr+ct)/2*b ; manual MAC 195 mm
+      dihedral_deg: 2.0          # estimate
+      x_le_root: 0.0
+      airfoil: S3021
+      thickness_ratio: 0.095
+      cl_max: {value: 1.15, source: "estimate, S3021 Re~150k, 3D", uncertainty: 0.1}
+      skin: {material: lw_pla_230C, thickness: 0.00045, walls: 1}
+      spars:
+        - {name: main_center,  tube: {od: 0.010, id: 0.008, material: cf_pultruded}, y_start: 0.0,  y_end: 0.50, x_c: 0.25, source: "manual 10x1000 (wall assumed)"}
+        - {name: rear_center,  tube: {od: 0.008, id: 0.006, material: cf_pultruded}, y_start: 0.0,  y_end: 0.50, x_c: 0.55, source: "manual 8x1000 (wall assumed)"}
+        - {name: outer_panel,  tube: {od: 0.006, id: 0.004, material: cf_pultruded}, y_start: 0.31, y_end: 0.81, x_c: 0.25, source: "manual 6x500 (placement assumed)"}
+      control_surfaces:
+        - {name: aileron, function: aileron, y_start: 0.38, y_end: 0.78, chord_fraction: 0.25,
+           max_defl_deg: 22, horn_arm: 0.012, servo_arm: 0.010, servo: servo_aileron}
+    - name: vtail
+      kind: v_tail
+      span: 0.265              # per panel (root-to-tip); 8x155 + 6x265 spars
+      root_chord: 0.150
+      tip_chord: 0.100
+      dihedral_deg: 35
+      x_le_root: 0.46
+      airfoil: NACA0009
+      thickness_ratio: 0.09
+      spars:
+        - {name: tail_root, tube: {od: 0.008, id: 0.006, material: cf_pultruded}, y_start: 0.0, y_end: 0.155}
+        - {name: tail_main, tube: {od: 0.006, id: 0.004, material: cf_pultruded}, y_start: 0.0, y_end: 0.265}
+      control_surfaces:
+        - {name: ruddervator, function: ruddervator, y_start: 0.02, y_end: 0.26, chord_fraction: 0.35,
+           max_defl_deg: 25, horn_arm: 0.012, servo_arm: 0.010, servo: servo_ruddervator}
+  fuselage: {length: 1.00, max_width: 0.11, max_height: 0.12, x_nose: -0.42}
+  landing: {method: belly, sink_rate: 1.5, crush_stroke: 0.010}
+  launch: {method: hand, launch_speed: 11.0, launch_load_factor: 3.0}
+
+materials:
+  cf_pultruded:
+    kind: cfrp_tube
+    density: 1550
+    E: {value: 1.20e+11, source: "TAP Plastics pultruded tube 134 GPa tensile / 127 GPa flex; 120 GPa used (generic import tubes)", uncertainty: 0.15}
+    G: {value: 4.0e+9, source: "estimate, UD pultrusion in-plane shear"}
+    strength_flex: {value: 1.37e+9, source: "TAP Plastics pultruded tube flexural strength 200 ksi"}
+    strength_tension: {value: 1.65e+9, source: "TAP Plastics"}
+    knockdown: 0.45   # unknown-vendor tubes, local crushing at printed sockets, scratches, hygrothermal
+    tg_C: 100
+    source: https://www.tapplastics.com/image/pdf/Pultruded_Carbon_Rods__Tubes.pdf
+  lw_pla_230C:
+    kind: printed_polymer
+    density: 750       # ~ 60 % of solid PLA; CNC Kitchen 225 C -> 67 %, 250 C -> 44 %
+    E: {value: 1.4e+9, source: "interp. colorFabb TDS (3350 MPa @200C/100%, 860 MPa @250C/45%) & CNC Kitchen bending modulus 1600 MPa @67%", uncertainty: 0.35}
+    strength_tension: {value: 2.0e+7, source: "CNC Kitchen 24 MPa @67 % density (horizontal)", uncertainty: 0.35}
+    strength_z: {value: 1.0e+7, source: "CNC Kitchen layer adhesion 13 MPa @67 %"}
+    knockdown: 0.5
+    tg_C: 55
+    print: {nozzle_C: 230, walls: 1, flow: 0.6}
+    source: https://cnckitchen.com/blog/colorfabb-lw-pla-testing-foaming-pla
+  petg:
+    kind: printed_polymer
+    density: 1270
+    E: {value: 1.9e+9, source: "typical PETG FDM, estimate"}
+    strength_tension: {value: 4.0e+7, source: "estimate"}
+    knockdown: 0.5
+    tg_C: 78
+
+components:
+  # --- printed structure (estimates until weighed) -------------------------
+  - {name: fuselage_print, category: structure_printed, mass: {value: 0.380, source: estimate}, position: [0.02, 0, 0], dims: [1.0, 0.11, 0.12], material: lw_pla_230C, shape: distributed}
+  - {name: wing_print_R,  category: structure_printed, mass: {value: 0.140, source: estimate}, position: [0.085, 0.40, 0.01], material: lw_pla_230C, mirror_y: true, shape: distributed}
+  - {name: vtail_print_R, category: structure_printed, mass: {value: 0.030, source: estimate}, position: [0.53, 0.10, 0.08], material: lw_pla_230C, mirror_y: true}
+  - {name: hatch_misc,    category: structure_printed, mass: {value: 0.015, source: estimate}, position: [-0.15, 0, 0.06]}
+  # --- tubes -----------------------------------------------------------------
+  - {name: spar_10x8x1000, category: structure_tube, mass: 0.044, position: [0.057, 0, 0.005], material: cf_pultruded}
+  - {name: spar_8x6x1000,  category: structure_tube, mass: 0.034, position: [0.127, 0, 0.005], material: cf_pultruded}
+  - {name: spar_6x4x500_R, category: structure_tube, mass: 0.012, position: [0.045, 0.56, 0.01], material: cf_pultruded, mirror_y: true}
+  - {name: tail_tubes,     category: structure_tube, mass: 0.016, position: [0.52, 0, 0.06], material: cf_pultruded}
+  # --- propulsion ------------------------------------------------------------
+  - {name: motor_cruise, category: propulsion, part_number: "BrotherHobby Avenger 2812 V5 910KV", mass: {value: 0.077, source: "getfpv V3 listing 76.5 g"}, position: [0.36, 0, 0.02], dims: [0.04, 0.035, 0.035], shape: cylinder, thermal_limit_C: 120}
+  - {name: prop_cruise,  category: propulsion, part_number: "APC 10x6E", mass: 0.020, position: [0.39, 0, 0.02]}
+  - {name: esc_cruise,   category: propulsion, part_number: "BLHeli_S 40A", mass: 0.035, position: [0.25, 0, 0.0], dims: [0.05, 0.025, 0.008], electrical: {current_cont: 40}}
+  # --- energy ----------------------------------------------------------------
+  - {name: battery, category: energy, part_number: "4S2P Molicel P50B", mass: {value: 0.600, source: "8 x 69-71 g + nickel/leads"}, position: [-0.077, 0, 0.0], dims: [0.145, 0.045, 0.072], shape: box, thermal_limit_C: 60}
+  # --- avionics --------------------------------------------------------------
+  - {name: fc,        category: avionics, part_number: "Matek H743-WING (assumed)", mass: 0.030, position: [-0.02, 0, 0.0], dims: [0.054, 0.036, 0.015]}
+  - {name: gps,       category: avionics, mass: 0.020, position: [0.02, 0, 0.055]}
+  - {name: airspeed,  category: avionics, mass: 0.010, position: [-0.40, 0, 0.0]}
+  - {name: rx_telem,  category: avionics, mass: 0.025, position: [0.10, 0, 0.0]}
+  - {name: servo_aileron, category: servo, part_number: "EMAX ES08MA II", mass: 0.012, position: [0.12, 0.45, 0.0], mirror_y: true, torque_stall_Nm: 0.157, supply_V: 4.8}
+  - {name: servo_ruddervator, category: servo, part_number: "EMAX ES08MA II", mass: 0.012, position: [0.30, 0.03, 0.0], mirror_y: true, torque_stall_Nm: 0.157, supply_V: 4.8}
+  - {name: wiring,    category: wiring, mass: 0.060, position: [0.0, 0, 0.0]}
+
+propulsion:
+  units:
+    - name: cruise
+      role: cruise
+      count: 1
+      positions: [[0.39, 0, 0.02]]
+      thrust_axis: [-1, 0, 0]
+      motor:
+        model: "BrotherHobby Avenger 2812 V5 910KV"
+        kv: {value: 910, source: manual}
+        rm: {value: 0.080, source: "2810 V5 910KV lists 89 mOhm; 2812 assumed slightly lower", uncertainty: 0.15}
+        i0: {value: 0.85, source: "2810 V5: 0.82 A @10 V", uncertainty: 0.2}
+        i0_ref_V: 10
+        i_max: 46
+        p_max: 1170
+        mass: 0.077
+        loss_limit_W: 30          # heuristic: ~0.4 W/g in pusher wake, see REPORT
+      prop: {model: "APC 10x6E", diameter: 0.254, pitch: 0.1524, blades: 2, data: "embedded:apc_10x6e", ct_scale: 0.92, cp_scale: 1.0}
+      esc: {model: "BLHeli_S 40A", i_cont: 40, i_burst: 50, r_on: 0.004}
+      wiring: {awg: 14, length: 0.35, connector: XT60, connector_i_cont: 60}
+
+energy:
+  cell:
+    model: Molicel INR21700-P50B
+    chemistry: li_ion_nmc
+    capacity_Ah: 5.0
+    r_dc: {value: 0.0128, source: "Molicel TDS: 12.8 mOhm DC @50 % SOC (typ.)"}
+    i_cont: 60
+    v_nom: 3.6
+    v_max: 4.2
+    v_min: 2.5
+    mass: 0.070
+  series: 4
+  parallel: 2
+  pack_wiring_r: 0.006
+  usable_fraction: 0.85
+  reserve_fraction: 0.20
+
+avionics:
+  autopilot: {board: Matek H743-WING, firmware: ArduPlane, firmware_version: "4.6.x", frame_class: plane}
+  sensors: [gps, airspeed_digital, baro, compass]
+  params:
+    ARSPD_FBW_MIN: 11
+    ARSPD_FBW_MAX: 22
+    ROLL_LIMIT_DEG: 45
+    TRIM_ARSPD_CM: 1300
+
+envelope:
+  v_stall_target: 9.0
+  v_cruise: 13.0
+  v_ne: 25.0
+  v_max_level: 22.0
+  n_limit_pos: 4.0
+  n_limit_neg: -1.5
+  fos: 1.5
+  gust_u_de: {at_v_cruise: 7.5, at_v_ne: 5.0}
+  max_bank_deg: 45
+
+environment_cases:
+  - {name: std_day,  altitude_msl: 0,   temperature_C: 15, solar_heating_dT_C: 10, wind_mean: 4, wind_gust: 8, turbulence: light}
+  - {name: hot_valley_summer, altitude_msl: 50, temperature_C: 42, solar_heating_dT_C: 20, wind_mean: 6, wind_gust: 11, turbulence: moderate}
+  - {name: cold_morning, altitude_msl: 0, temperature_C: 2, solar_heating_dT_C: 0, wind_mean: 3, wind_gust: 6, turbulence: light}
+
+missions:
+  - name: canal_inspection_out_and_back
+    environment: std_day
+    segments:
+      - {kind: launch}
+      - {kind: climb, altitude: 100}
+      - {kind: cruise, distance: 20000, airspeed: 13}
+      - {kind: loiter, duration: 300, airspeed: 12}
+      - {kind: cruise, distance: 20000, airspeed: 13}
+      - {kind: land}
+    reserve_fraction: 0.2
+
+variants:
+  vtol:
+    meta: {phase: "Phase 1 - VTOL (quadplane)"}
+    airframe:
+      booms:
+        - {name: boom_R, tube: {shape: square, od: 0.010, id: 0.008, material: cf_pultruded},
+           root: [0.30, 0.30, -0.01], supports: [[0.057, 0.30, -0.01], [0.127, 0.30, -0.01]],
+           tip: [-0.20, 0.30, -0.01], tip_mass_components: [lift_pod_FR, lift_pod_RR]}
+      landing: {method: vtol, sink_rate: 1.0, crush_stroke: 0.008}
+      launch: {method: vtol}
+    components_add:
+      - {name: boom_R, category: structure_tube, mass: 0.028, position: [0.05, 0.30, -0.01], mirror_y: true, variant_only: vtol}
+      # each pod = F90 motor 46.6 g + 7in prop 9 g + PETG motor mount 15 g
+      - {name: lift_pod_FR, category: propulsion, part_number: "T-Motor F90 1300KV + 7in prop + mount", mass: 0.0706, position: [-0.20, 0.30, 0.0], dims: [0.04, 0.04, 0.04], mirror_y: true}
+      - {name: lift_pod_RR, category: propulsion, part_number: "T-Motor F90 1300KV + 7in prop + mount", mass: 0.0706, position: [0.30, 0.30, 0.0], dims: [0.04, 0.04, 0.04], mirror_y: true}
+      - {name: lift_escs,     category: propulsion, mass: 0.060, position: [0.05, 0, -0.01]}
+      - {name: lift_wiring,   category: wiring, mass: 0.045, position: [0.05, 0, 0.0]}
+    propulsion_add:
+      - name: lift
+        role: lift
+        count: 4
+        positions: [[-0.20, 0.30, 0.02], [-0.20, -0.30, 0.02], [0.30, 0.30, 0.02], [0.30, -0.30, 0.02]]
+        thrust_axis: [0, 0, 1]
+        motor: {model: "T-Motor F90 1300KV", kv: 1300, rm: {value: 0.076, source: "T-Motor / flyingtech listing 76 mOhm"}, i0: {value: 0.95, source: "0.95 A @10 V"}, i0_ref_V: 10, i_max: 45.1, p_max: 1059, mass: 0.0466, loss_limit_W: 35}
+        prop: {model: "APC 7x5E (stand-in for 7in lift prop)", diameter: 0.1778, pitch: 0.127, data: "embedded:apc_7x5e", ct_scale: 0.92, cp_scale: 1.0}
+        esc: {model: "35A BLHeli_32 (assumed)", i_cont: 35, r_on: 0.004}
+        wiring: {awg: 16, length: 0.45, connector: solder, connector_i_cont: 40}
+    auw_cases_kg: [2.2, 2.6, 3.1]
+    avionics:
+      autopilot: {frame_class: quadplane}

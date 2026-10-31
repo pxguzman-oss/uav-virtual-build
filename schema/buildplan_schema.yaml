@@ -1,0 +1,353 @@
+# =====================================================================
+# Virtual-Build "BUILD PLAN" schema  (JSON-Schema draft 2020-12, in YAML)
+# ---------------------------------------------------------------------
+# One build plan = one aircraft configuration that a team intends to
+# print/assemble/fly. Every pipeline stage reads ONLY this file (plus the
+# outputs of earlier stages), so the plan is the single source of truth.
+#
+# Conventions (enforced by the loader, documented here):
+#   * SI units everywhere: m, kg, N, s, V, A, Ohm, W, Wh, Pa, deg for angles
+#     (angles are the only non-SI exception; suffix _deg makes it explicit).
+#   * Body frame "design frame" (OpenVSP-like):
+#       origin = wing-root leading edge on the centreline,
+#       +x aft, +y right (starboard), +z up.
+#     The flight-model stage converts to ArduPilot/JSBSim body axes
+#     (x fwd, y right, z down) -- never mix frames inside the plan.
+#   * Every numeric input that is not measured carries a `source:` string
+#     (datasheet URL, "estimate", "measured 2026-10-12 scale") so the report
+#     can show which numbers are soft. `uncertainty` (+/- fraction) drives
+#     the Monte-Carlo / corner-case runs.
+#   * `variants:` holds overlays (JSON-merge-patch semantics) e.g. a VTOL
+#     variant that adds booms, lift motors and mass to the base aircraft.
+# =====================================================================
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://example.org/virtual-build/buildplan.schema.yaml"
+title: VirtualBuildPlan
+type: object
+required: [meta, airframe, materials, components, propulsion, energy, avionics, envelope]
+additionalProperties: false
+
+$defs:
+  vec3:
+    type: array
+    items: {type: number}
+    minItems: 3
+    maxItems: 3
+  sourced_number:            # a number with provenance, used where it matters
+    oneOf:
+      - type: number
+      - type: object
+        required: [value]
+        properties:
+          value: {type: number}
+          source: {type: string}
+          uncertainty: {type: number, minimum: 0, description: "+/- fraction, 0.1 = 10 %"}
+        additionalProperties: false
+  tube:
+    type: object
+    required: [od, id]
+    properties:
+      shape: {enum: [round, square], default: round}
+      od: {type: number, exclusiveMinimum: 0, description: "outer diameter / outer side [m]"}
+      id: {type: number, minimum: 0, description: "inner diameter / inner side [m]"}
+      material: {type: string, description: "key into materials"}
+    additionalProperties: false
+  spar_segment:
+    type: object
+    required: [name, tube, y_start, y_end]
+    properties:
+      name: {type: string}
+      tube: {$ref: "#/$defs/tube"}
+      y_start: {type: number, description: "spanwise start [m] from centreline"}
+      y_end: {type: number}
+      x_c: {type: number, description: "chordwise position as fraction of local chord"}
+      bending_share: {type: number, minimum: 0, maximum: 1,
+                      description: "override of EI-proportional load share"}
+      source: {type: string}
+    additionalProperties: false
+  lifting_surface:
+    type: object
+    required: [name, span, root_chord, tip_chord, airfoil]
+    properties:
+      name: {type: string}
+      kind: {enum: [wing, htail, vtail, v_tail, canard, fin], default: wing}
+      symmetric: {type: boolean, default: true}
+      span: {type: number, description: "tip-to-tip (symmetric) or root-to-tip [m]"}
+      area: {type: number}
+      root_chord: {type: number}
+      tip_chord: {type: number}
+      sweep_le_deg: {type: number, default: 0}
+      dihedral_deg: {type: number, default: 0}
+      twist_tip_deg: {type: number, default: 0}
+      incidence_deg: {type: number, default: 0}
+      x_le_root: {type: number, default: 0}
+      z_le_root: {type: number, default: 0}
+      airfoil: {type: string, description: "name or path to .dat (Selig format)"}
+      thickness_ratio: {type: number}
+      cl_max: {$ref: "#/$defs/sourced_number"}
+      skin: {type: object, properties: {material: {type: string}, thickness: {type: number}, walls: {type: integer}},
+             additionalProperties: false}
+      spars: {type: array, items: {$ref: "#/$defs/spar_segment"}}
+      control_surfaces:
+        type: array
+        items:
+          type: object
+          required: [name, function, y_start, y_end, chord_fraction, max_defl_deg, servo]
+          properties:
+            name: {type: string}
+            function: {enum: [aileron, elevator, rudder, ruddervator, elevon, flap, flaperon]}
+            y_start: {type: number}
+            y_end: {type: number}
+            chord_fraction: {type: number}
+            max_defl_deg: {type: number}
+            hinge_gap_sealed: {type: boolean, default: false}
+            horn_arm: {type: number, description: "control-horn arm [m]"}
+            servo_arm: {type: number, description: "servo-horn arm [m]"}
+            servo: {type: string, description: "component name of the servo"}
+          additionalProperties: false
+    additionalProperties: false
+
+properties:
+  meta:
+    type: object
+    required: [name, revision, phase]
+    properties:
+      name: {type: string}
+      revision: {type: string}
+      phase: {type: string}
+      base_design: {type: string, description: "kit / upstream design + version"}
+      references: {type: array, items: {type: string}}
+      owner: {type: string}
+      notes: {type: string}
+    additionalProperties: true
+
+  frames:
+    type: object
+    properties:
+      datum: {type: string, default: "wing root LE, centreline"}
+      axes: {type: string, default: "x aft, y right, z up"}
+
+  airframe:
+    type: object
+    required: [lifting_surfaces, fuselage]
+    properties:
+      lifting_surfaces: {type: array, items: {$ref: "#/$defs/lifting_surface"}, minItems: 1}
+      fuselage:
+        type: object
+        properties:
+          length: {type: number}
+          max_width: {type: number}
+          max_height: {type: number}
+          x_nose: {type: number}
+          cad: {type: string, description: "STEP/STL path of the printed fuselage (for fit/clash)"}
+          payload_bay: {type: object, properties: {min: {$ref: "#/$defs/vec3"}, max: {$ref: "#/$defs/vec3"}}}
+      booms:
+        type: array
+        items:
+          type: object
+          required: [name, tube, root, tip]
+          properties:
+            name: {type: string}
+            tube: {$ref: "#/$defs/tube"}
+            root: {$ref: "#/$defs/vec3", description: "clamp / support point"}
+            tip: {$ref: "#/$defs/vec3"}
+            supports: {type: array, items: {$ref: "#/$defs/vec3"}, description: "all clamp points"}
+            tip_mass_components: {type: array, items: {type: string}}
+          additionalProperties: false
+      landing: {type: object, properties: {
+          method: {enum: [belly, skid, gear, vtol, net, parachute]},
+          sink_rate: {type: number, description: "design vertical speed at touchdown [m/s]"},
+          crush_stroke: {type: number, description: "effective stopping distance [m]"}}}
+      launch: {type: object, properties: {
+          method: {enum: [hand, bungee, catapult, vtol, runway]},
+          launch_speed: {type: number}, launch_load_factor: {type: number}}}
+      cad_files: {type: array, items: {type: string}}
+
+  materials:
+    type: object
+    description: "key -> material card. Printed materials need the print setting they were characterised at."
+    additionalProperties:
+      type: object
+      required: [kind, density, E]
+      properties:
+        kind: {enum: [cfrp_tube, printed_polymer, wood, foam, metal, other]}
+        density: {type: number}
+        E: {$ref: "#/$defs/sourced_number"}
+        G: {$ref: "#/$defs/sourced_number"}
+        strength_tension: {$ref: "#/$defs/sourced_number"}
+        strength_flex: {$ref: "#/$defs/sourced_number"}
+        strength_compression: {$ref: "#/$defs/sourced_number"}
+        strength_z: {$ref: "#/$defs/sourced_number", description: "layer-adhesion strength (printed)"}
+        knockdown: {type: number, default: 1.0, description: "design allowable = strength * knockdown"}
+        tg_C: {type: number, description: "glass transition / max service temp [C]"}
+        print: {type: object, description: "nozzle_C, flow, walls, infill... the state E/strength refer to"}
+        source: {type: string}
+      additionalProperties: true
+
+  components:
+    type: array
+    description: "Every physical item. Mass/CG/inertia, fit/clash, wiring all come from this list."
+    items:
+      type: object
+      required: [name, category, mass, position]
+      properties:
+        name: {type: string}
+        category: {enum: [structure_printed, structure_tube, propulsion, energy, avionics,
+                          servo, payload, wiring, hardware, ballast, other]}
+        part_number: {type: string}
+        mass: {$ref: "#/$defs/sourced_number"}
+        position: {$ref: "#/$defs/vec3", description: "CG of the item, design frame [m]"}
+        dims: {$ref: "#/$defs/vec3", description: "bounding box l,w,h [m] (for clash & inertia)"}
+        shape: {enum: [box, cylinder, tube, distributed, cad]}
+        material: {type: string}
+        mirror_y: {type: boolean, default: false, description: "duplicate at -y"}
+        cad: {type: string}
+        mount: {type: string, description: "which printed part / bay it sits in"}
+        thermal_limit_C: {type: number}
+        electrical: {type: object, description: "voltage, current_cont, current_peak, connector"}
+        torque_stall_Nm: {type: number, description: "servos: stall torque at supply voltage"}
+        supply_V: {type: number}
+        variant_only: {type: string}
+      additionalProperties: true
+
+  propulsion:
+    type: object
+    required: [units]
+    properties:
+      units:
+        type: array
+        items:
+          type: object
+          required: [name, role, motor, prop, esc, count]
+          properties:
+            name: {type: string}
+            role: {enum: [cruise, lift, tilt]}
+            count: {type: integer, minimum: 1}
+            positions: {type: array, items: {$ref: "#/$defs/vec3"}}
+            thrust_axis: {$ref: "#/$defs/vec3"}
+            motor:
+              type: object
+              required: [kv, rm, i0]
+              properties:
+                model: {type: string}
+                kv: {$ref: "#/$defs/sourced_number"}
+                rm: {$ref: "#/$defs/sourced_number", description: "phase-phase winding resistance [Ohm]"}
+                i0: {$ref: "#/$defs/sourced_number"}
+                i0_ref_V: {type: number}
+                i_max: {type: number}
+                p_max: {type: number}
+                mass: {type: number}
+                loss_limit_W: {type: number, description: "continuous dissipation the motor survives in its cooling situation"}
+              additionalProperties: true
+            prop:
+              type: object
+              required: [diameter, pitch]
+              properties:
+                model: {type: string}
+                diameter: {type: number}
+                pitch: {type: number}
+                blades: {type: integer, default: 2}
+                data: {type: string, description: "path to Ct/Cp(J) table (APC PER3, UIUC) or 'embedded:<key>'"}
+                ct_scale: {type: number, default: 1.0, description: "calibration factor, fitted on thrust stand"}
+                cp_scale: {type: number, default: 1.0}
+              additionalProperties: true
+            esc:
+              type: object
+              required: [i_cont]
+              properties: {model: {type: string}, i_cont: {type: number}, i_burst: {type: number},
+                           r_on: {type: number}, bec_A: {type: number}}
+              additionalProperties: true
+            wiring: {type: object, properties: {
+                awg: {type: integer}, length: {type: number}, connector: {type: string},
+                connector_i_cont: {type: number}}}
+          additionalProperties: true
+
+  energy:
+    type: object
+    required: [cell, series, parallel]
+    properties:
+      cell: {type: object, required: [model, capacity_Ah, r_dc, i_cont, v_max, v_min, mass],
+             properties: {model: {type: string}, chemistry: {enum: [li_ion_nmc, li_ion_nca, lipo, lifepo4, li_ion_lfp]},
+                          capacity_Ah: {type: number}, r_dc: {$ref: "#/$defs/sourced_number"},
+                          i_cont: {type: number}, v_nom: {type: number}, v_max: {type: number},
+                          v_min: {type: number}, mass: {type: number}, ocv_curve: {type: string}},
+             additionalProperties: true}
+      series: {type: integer}
+      parallel: {type: integer}
+      pack_wiring_r: {type: number, description: "interconnect + main lead + connector [Ohm]"}
+      usable_fraction: {type: number, default: 0.85}
+      reserve_fraction: {type: number, default: 0.2, description: "mission reserve, used by endurance gate"}
+
+  avionics:
+    type: object
+    properties:
+      autopilot: {type: object, properties: {board: {type: string}, firmware: {type: string},
+                                              firmware_version: {type: string}, frame_class: {type: string}}}
+      sensors: {type: array, items: {type: string}}
+      params_file: {type: string, description: "ArduPilot .param baseline the SITL stage starts from"}
+      params: {type: object, description: "overrides, e.g. {ARSPD_FBW_MAX: 22}"}
+      rc: {type: object}
+      telemetry: {type: object}
+    additionalProperties: true
+
+  envelope:
+    type: object
+    required: [v_cruise, v_ne, n_limit_pos]
+    properties:
+      v_stall_target: {type: number}
+      v_cruise: {type: number}
+      v_ne: {type: number}
+      v_max_level: {type: number}
+      n_limit_pos: {type: number, description: "limit load factor (positive), ultimate = n * fos"}
+      n_limit_neg: {type: number}
+      fos: {type: number, default: 1.5}
+      gust_u_de: {type: object, properties: {at_v_cruise: {type: number}, at_v_ne: {type: number}}}
+      max_bank_deg: {type: number}
+
+  environment_cases:
+    type: array
+    items:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        altitude_msl: {type: number}
+        temperature_C: {type: number}
+        solar_heating_dT_C: {type: number, description: "skin temperature rise above ambient in sun"}
+        wind_mean: {type: number}
+        wind_gust: {type: number}
+        turbulence: {enum: [none, light, moderate, severe]}
+      additionalProperties: true
+
+  missions:
+    type: array
+    items:
+      type: object
+      required: [name, segments]
+      properties:
+        name: {type: string}
+        environment: {type: string}
+        segments:
+          type: array
+          items:
+            type: object
+            required: [kind]
+            properties:
+              kind: {enum: [launch, vtol_takeoff, climb, cruise, loiter, survey, transition, vtol_land, glide, land]}
+              distance: {type: number}
+              duration: {type: number}
+              altitude: {type: number}
+              airspeed: {type: number}
+            additionalProperties: true
+        reserve_fraction: {type: number}
+      additionalProperties: true
+
+  gates:
+    type: object
+    description: "Override default pass/fail thresholds per stage (see PIPELINE_DESIGN.md section 3)."
+    additionalProperties: {type: object}
+
+  variants:
+    type: object
+    description: "name -> overlay (merge-patch). Arrays of named objects are merged by `name`."
+    additionalProperties: {type: object}
