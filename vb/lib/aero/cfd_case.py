@@ -24,9 +24,11 @@ HDR = """/*--------------------------------*- C++ -*----------------------------
 \\*---------------------------------------------------------------------------*/
 FoamFile {{ version 2.0; format ascii; class {cls}; {loc} object {obj}; }}
 """
-SHIM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "foam_sha1_shim", "libfoam_sha1_shim.so")
+SHIM = os.environ.get("VB_FOAM_SHIM") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "foam_sha1_shim",
+                                                      "libfoam_sha1_shim.so")
+BASHRC = os.environ.get("VB_OPENFOAM_BASHRC", "/usr/share/openfoam/etc/bashrc")
 # LD_PRELOAD shim works around the v1912/GCC-13 dictionary::digest() bug that kills all function objects
-OF_ENV = ("source /usr/share/openfoam/etc/bashrc >/dev/null 2>&1 || true; "
+OF_ENV = (f"source {BASHRC} >/dev/null 2>&1 || true; "
           + (f"export LD_PRELOAD={SHIM}; " if os.path.exists(SHIM) else ""))
 
 

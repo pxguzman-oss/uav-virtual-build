@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/dronelab/aero_dataset.schema.json",
+  "title": "DroneLab virtual-build AERO DATASET v1 (aero/CFD stage -> flight-sim stage)",
+  "description": "Output contract of research/aero/stork_aero.py (low-order) and cfd_case.py (CFD calibration points). Units SI; angles in *_deg keys are degrees, all derivatives are PER RADIAN; rate derivatives are non-dimensionalised with p*b/2V, q*c/2V, r*b/2V. Frame for positions: structural (origin wing-root LE on centreline, +X aft, +Y right, +Z up) - identical to sim/schema/aircraft_model.schema.json and geom/stork.yaml. Force/moment coefficients: stability axes, standard flight-mechanics signs (CL up, CD along -V, CY right, Cl right-wing-down +, Cm nose-up +, Cn nose-right +), referenced to reference.S_m2, b_m (Cl, Cn), c_m (Cm), about reference.moment_ref_m. Control deflections positive TRAILING-EDGE-DOWN for every physical surface (V-tail panel: towards its lower/outboard side). Names of derivatives (CL0, CLa, CLq, CLmax, alpha_stall_deg, CD0, oswald, CD_beta2, Cm0, Cma, Cmq, Cmadot, CYb, CYp, CYr, Clb, Clp, Clr, Cnb, Cnp, Cnr) and of surfaces (aileron_left, ...) are IDENTICAL to sim/schema/aircraft_model.schema.json so 'derivatives' and 'surfaces[].derivatives_per_rad' can be copied verbatim. JSBSim mapping: alpha_tables[V] -> <function name='aero/coefficient/CL'> table of aero/alpha-deg (optionally 2-D with Re/velocity breakpoints from the several V entries); beta_table -> CY/Cl/Cn(beta) tables; derivatives -> product functions (e.g. Clp * pb/2V). ArduPilot SITL (SIM_Plane / JSON backend) mapping: CLa->'CLa', CL0->'CL0', CD0->'CD0', Cma->'Cma', Cm0->'Cm0', Cmq->'Cmq', CYb->'CYb', Clb->'Clb', Clp->'Clp', Clr->'Clr', Cnb->'Cnb', Cnp->'Cnp', Cnr->'Cnr', aileron Cl -> 'Cl_da' (use right-minus-left/2 for the antisymmetric mode), V-tail: elevator mode Cm_de = Cm(rv_left)+Cm(rv_right), rudder mode Cn_dr = Cn(rv_right)-Cn(rv_left) with SIM_Plane's sign convention checked per-model.",
+  "type": "object",
+  "required": ["schema_version", "name", "provenance", "reference", "alpha_tables", "beta_table", "derivatives", "surfaces"],
+  "$defs": {
+    "vec3": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+    "numarr": {"type": "array", "items": {"type": "number"}, "minItems": 2},
+    "num_or_null": {"type": ["number", "null"]},
+    "alpha_table": {
+      "type": "object",
+      "description": "Longitudinal static data at beta = 0, controls neutral, at one airspeed (Reynolds number). CD is the TOTAL drag (induced + profile + fuselage/tail/booms + excrescence + extras). Should span -20..+30 deg; post-stall from AeroSandbox 360-deg model (low confidence beyond ~CLmax+5 deg).",
+      "required": ["V_mps", "alpha_deg", "CL", "CD", "Cm"],
+      "properties": {
+        "V_mps": {"type": "number"},
+        "Re_mac": {"type": "number"},
+        "alpha_deg": {"$ref": "#/$defs/numarr"},
+        "CL": {"$ref": "#/$defs/numarr"},
+        "CD": {"$ref": "#/$defs/numarr"},
+        "Cm": {"$ref": "#/$defs/numarr"},
+        "CD_profile": {"$ref": "#/$defs/numarr"},
+        "CD_induced": {"$ref": "#/$defs/numarr"},
+        "CD_extra": {"type": "number", "description": "Constant extra CD from items not modelled (VTOL motors, stopped props ...)."}
+      }
+    },
+    "control_derivs": {
+      "type": "object",
+      "description": "Increment of TOTAL aircraft coefficients per radian of this surface's deflection (+ TE down).",
+      "required": ["CL", "CY", "Cl", "Cm", "Cn", "CD_abs"],
+      "properties": {
+        "CL": {"type": "number"}, "CY": {"type": "number"}, "Cl": {"type": "number"},
+        "Cm": {"type": "number"}, "Cn": {"type": "number"},
+        "CD_abs": {"type": "number", "minimum": 0, "description": "Drag increment per |rad| (induced from AVL Trefftz + 0.02/rad viscous allowance)."}
+      }
+    }
+  },
+  "properties": {
+    "schema": {"type": "string"},
+    "schema_version": {"const": "1.0"},
+    "name": {"type": "string"},
+    "created": {"type": "string"},
+    "provenance": {
+      "type": "object",
+      "required": ["geometry", "tools"],
+      "properties": {
+        "geometry": {"type": "string", "description": "Path / revision of the parametric geometry used."},
+        "assumptions": {"type": "array", "items": {"type": "string"}},
+        "tools": {"type": "object"},
+        "wall_time_s": {"type": "object"}
+      }
+    },
+    "reference": {
+      "type": "object",
+      "required": ["S_m2", "b_m", "c_m", "moment_ref_m"],
+      "properties": {
+        "S_m2": {"type": "number"}, "b_m": {"type": "number"}, "c_m": {"type": "number"},
+        "moment_ref_m": {"$ref": "#/$defs/vec3"},
+        "frame": {"type": "string"},
+        "mass_kg": {"type": "number"}
+      }
+    },
+    "conditions": {
+      "type": "object",
+      "properties": {
+        "V_cruise_mps": {"type": "number"}, "alpha_cruise_deg": {"type": "number"}, "CL_cruise": {"type": "number"},
+        "Re_mac_cruise": {"type": "number"}, "rho": {"type": "number"}
+      }
+    },
+    "alpha_tables": {
+      "type": "object",
+      "description": "Keyed by airspeed string (e.g. '14.0'). Several speeds give the Reynolds-number dependence (important at Re 1-3e5).",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/alpha_table"}
+    },
+    "beta_table": {
+      "type": "object",
+      "required": ["alpha_deg", "beta_deg", "CY", "Cl", "Cn"],
+      "properties": {
+        "alpha_deg": {"type": "number"},
+        "beta_deg": {"$ref": "#/$defs/numarr"},
+        "CY": {"$ref": "#/$defs/numarr"}, "Cl": {"$ref": "#/$defs/numarr"}, "Cn": {"$ref": "#/$defs/numarr"},
+        "CD": {"$ref": "#/$defs/numarr"}
+      }
+    },
+    "derivatives": {
+      "type": "object",
+      "description": "Recommended linear set (same names as sim schema).",
+      "required": ["CL0", "CLa", "CLq", "CLmax", "alpha_stall_deg", "CD0", "oswald", "Cm0", "Cma", "Cmq", "CYb", "CYp", "CYr", "Clb", "Clp", "Clr", "Cnb", "Cnp", "Cnr"],
+      "properties": {
+        "CL0": {"type": "number"}, "CLa": {"type": "number"}, "CLq": {"type": "number"},
+        "CLmax": {"type": "number"}, "alpha_stall_deg": {"type": "number"}, "CL_post_stall_drop": {"type": "number"},
+        "CD0": {"type": "number"}, "oswald": {"type": "number"}, "CD_beta2": {"$ref": "#/$defs/num_or_null"},
+        "Cm0": {"type": "number"}, "Cma": {"type": "number"}, "Cmq": {"type": "number"}, "Cmadot": {"$ref": "#/$defs/num_or_null"},
+        "CYb": {"type": "number"}, "CYp": {"type": "number"}, "CYr": {"type": "number"},
+        "Clb": {"type": "number"}, "Clp": {"type": "number"}, "Clr": {"type": "number"},
+        "Cnb": {"type": "number"}, "Cnp": {"type": "number"}, "Cnr": {"type": "number"}
+      }
+    },
+    "derivatives_by_source": {"type": "object", "description": "Raw per-tool values (aerobuildup, avl, asb_vlm, cfd ...) for traceability."},
+    "surfaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "derivatives_per_rad"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "kind": {"type": "string", "enum": ["aileron", "elevator", "rudder", "ruddervator", "elevon", "flap", "flaperon", "other"]},
+          "max_deflection_deg": {"type": "number"},
+          "derivatives_per_rad": {"$ref": "#/$defs/control_derivs"}
+        }
+      }
+    },
+    "drag_breakdown_cruise": {"type": "object"},
+    "polar_fit": {
+      "type": "object",
+      "description": "CD = CD0 + k (CL - CL_minD)^2 fitted over the attached-flow range; e_eff = 1/(pi AR k).",
+      "properties": {"CD0": {"type": "number"}, "CL_minD": {"type": "number"}, "k": {"type": "number"}, "e_eff": {"type": "number"}}
+    },
+    "performance": {"type": "object"},
+    "avl_alpha_table": {"type": "object"},
+    "cfd_points": {
+      "type": "array",
+      "description": "High-fidelity calibration points from cfd_case.py (half-model, symmetry plane).",
+      "items": {
+        "type": "object",
+        "required": ["tool", "V_mps", "alpha_deg", "CL", "CD"],
+        "properties": {
+          "tool": {"type": "string"}, "turbulence_model": {"type": "string"}, "geometry": {"type": "string"},
+          "V_mps": {"type": "number"}, "alpha_deg": {"type": "number"},
+          "CL": {"type": "number"}, "CD": {"type": "number"}, "Cm": {"type": "number"},
+          "cells": {"type": "integer"}, "wall_time_s": {"type": "number"}, "converged": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

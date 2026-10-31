@@ -26,8 +26,8 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import buildplan as bp  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from vb import plan as bp  # noqa: E402
 
 G = 9.80665
 RHO = 1.225
@@ -61,14 +61,16 @@ def tube_props(t, materials):
 
 
 # ---------------------------------------------------------------------------
-def run(plan_path, variant, out_dir):
-    plan = bp.load(plan_path, variant)
+def run(plan, variant, out_dir, prop=None, M_auw=None):
+    """plan: variant-resolved plan dict; prop: propulsion-stage data (hover table, cruise rpm); M_auw [kg]."""
+    results.clear()
+    diag = {}
     mats = plan["materials"]
     env = plan["envelope"]
     mp = bp.mass_properties(plan)
-    prop_json = Path(out_dir) / "propulsion.json"
-    prop = json.loads(prop_json.read_text()) if prop_json.exists() else {}
-    M_auw, W = mp["mass"], mp["mass"] * G
+    prop = prop or {}
+    M_auw = M_auw or mp["mass"]
+    W = M_auw * G
     wing = plan["airframe"]["lifting_surfaces"][0]
     b, S, cr, ct = wing["span"], wing["area"], wing["root_chord"], wing["tip_chord"]
     s = b / 2
@@ -106,6 +108,10 @@ def run(plan_path, variant, out_dir):
         print(f"      {k:36s} n = {v:5.2f}")
     print(f"      belly/hard landing (sink {land.get('sink_rate')} m/s, stroke {land.get('crush_stroke')*1000:.0f} mm): n = {n_land:.1f}")
     n_design = max(cases["manoeuvre n_limit"], cases["gust @VNE (stall-capped)"], cases["gust @Vc (stall-capped)"])
+    diag["vn"] = dict(Vs=Vs, VA=VA, a3d=a3d, Kg=Kg, mu=mu, clmax=clmax, WS=W / S, n_land=n_land, cases=cases,
+                      V=np.linspace(0, env["v_ne"], 60).tolist(), n_stall=[n_stall(v) for v in np.linspace(0, env["v_ne"], 60)],
+                      n_gust_c=[n_gust(v, gust.get("at_v_cruise", 7.5)) for v in np.linspace(0, env["v_ne"], 60)],
+                      n_gust_ne=[n_gust(v, gust.get("at_v_ne", 5.0)) for v in np.linspace(0, env["v_ne"], 60)])
     gate("envelope", "gust load factor @VNE <= n_limit (else lower VNE)", cases["gust @VNE (stall-capped)"],
          env["n_limit_pos"], "<=", "WARN")
     q_max = (env["n_limit_pos"] - 1) * G / env["v_ne"]
@@ -177,6 +183,14 @@ def run(plan_path, variant, out_dir):
             if ratio > worst.get(sp["name"], (0,))[0]:
                 worst[sp["name"]] = (ratio, name, y[k], sig[k] / fos / 1e6)
         print(f"    {name:38s} {max(nl, ni):5.2f}  {Mb[0]:8.2f}    " + "; ".join(line))
+    _, Mb_d = moment(n_design, n_design)
+    ratios = {}
+    for sp in sp_props:
+        on = (y >= sp["y_start"]) & (y <= sp["y_end"])
+        share = np.where(on, sp["EI"] / np.maximum(EI_tubes, 1e-12), 0)
+        ratios[sp["name"]] = (np.abs(Mb_d) * share * sp["c"] / sp["I"] * fos / sp["allow"]).tolist()
+    diag["spar"] = dict(y=y.tolist(), M_design=Mb_d.tolist(), n_design=n_design, stress_ratio_ult=ratios,
+                        EI_tubes=EI_tubes.tolist())
     for nm, (ratio, case, yy, sig_lim) in worst.items():
         gate("wing spar", f"spar {nm}: margin of safety (ultimate) [{case}]", 1 / ratio - 1, 0.0,
              note=f"(limit stress {sig_lim:.0f} MPa @y={yy:.2f} m)")
@@ -190,6 +204,7 @@ def run(plan_path, variant, out_dir):
     k1 = M1 / EI_tubes
     d1 = np.concatenate([[0], np.cumsum((np.concatenate([[0], np.cumsum((k1[:-1] + k1[1:]) / 2 * dy)])[:-1]
                                           + np.concatenate([[0], np.cumsum((k1[:-1] + k1[1:]) / 2 * dy)])[1:]) / 2 * dy)])
+    diag["spar"]["deflection_design"] = defl.tolist()
     print(f"    tip deflection (tubes only): 1 g {d1[-1]*1000:.0f} mm, n={n_design:.1f} {defl[-1]*1000:.0f} mm "
           f"({defl[-1]/s*100:.0f} % semi-span)")
     gate("wing spar", "tip deflection at n_design / semi-span", defl[-1] / s, 0.15, "<=", "WARN",
@@ -354,11 +369,12 @@ def run(plan_path, variant, out_dir):
 
     out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
     fn = out / f"structures_{variant or 'base'}.json"
-    fn.write_text(json.dumps(dict(plan=plan["meta"]["name"], variant=variant, auw=M_auw, VA=VA, Vs=Vs,
-                                  load_factors=cases, n_land=n_land, gates=results), indent=2, default=float))
+    out_d = dict(plan=plan["meta"]["name"], variant=variant, auw=M_auw, VA=VA, Vs=Vs, load_factors=cases, n_land=n_land,
+                 n_design=n_design, f_bend=fb, f_tors=ft, V_div=VD, V_rev=VR, q_max_rad_s=q_max, gates=list(results), diag=diag)
+    fn.write_text(json.dumps(out_d, indent=2, default=float))
     n_fail = sum(r["status"] == "FAIL" for r in results); n_warn = sum(r["status"] == "WARN" for r in results)
     print(f"\n   summary: {len(results)} checks, {n_fail} FAIL, {n_warn} WARN -> {fn}")
-    return results
+    return out_d
 
 
 if __name__ == "__main__":

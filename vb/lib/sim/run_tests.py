@@ -17,17 +17,29 @@ import argparse, json, math, os, sys, time, traceback
 from pymavlink import mavutil
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sitl import SitlRun, ll_offset, ROOT
+from sitl import SitlRun, ll_offset
 import course
 import analyze
 
+# Set by the caller (vb.stages.sitl): where results go and which generated model / parameter files to use.
+CFG = dict(results=os.path.abspath("results"), gen_dir=None, model="model", parm_files=None, home=None,
+           survey_alt=60, takeoff_alt=40, cruise_v=13.0)
+
+
+def new_run(name, **kw):
+    kw.setdefault("model", CFG["model"])
+    kw.setdefault("gen_dir", CFG["gen_dir"])
+    kw.setdefault("parm_files", CFG["parm_files"])
+    kw.setdefault("home", home_str())
+    return SitlRun(os.path.join(CFG["results"], name), **kw)
+
 M = mavutil.mavlink
 HOME = (-35.363262, 149.165237, 584.0, 0.0)
-ALT = 60  # survey altitude AGL
+ALT = 60  # survey altitude AGL (CFG['survey_alt'] wins)
 
 
 def home_str():
-    return ",".join(str(x) for x in HOME)
+    return CFG.get("home") or ",".join(str(x) for x in HOME)
 
 
 def takeoff_items(alt=40, pitch=12):
@@ -35,7 +47,8 @@ def takeoff_items(alt=40, pitch=12):
             dict(cmd=M.MAV_CMD_NAV_TAKEOFF, p1=pitch, alt=alt)]                       # 1
 
 
-def canal_items(spacing=25.0, cam_dist=20.0, alt=ALT, comp_l1=None):
+def canal_items(spacing=25.0, cam_dist=20.0, alt=None, comp_l1=None):
+    alt = alt or CFG['survey_alt']
     cl = course.centreline()
     wps, L = course.waypoints(cl, spacing)
     if comp_l1:
@@ -97,14 +110,14 @@ def t_mission(a, name=None, l1=None, wind=None, turb=None, speedup=100):
     comp = None
     if a.compensate:
         per = params.get("NAVL1_PERIOD", 15)
-        comp = 0.75 * per * 13.0 / math.pi   # L1 distance = damping*period*V/pi
+        comp = 0.75 * per * CFG["cruise_v"] / math.pi   # L1 distance = damping*period*V/pi
     items, meta, cl = canal_items(spacing=a.spacing, comp_l1=comp)
     meta.update(params=params, wind=w, turb=tb, compensated_L1_m=comp)
     extra = []
     if a.backend == "simplane":
-        extra = [os.path.join(ROOT, "params", "simplane_vtail.parm")]
+        extra = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "data", "ardupilot", "simplane_vtail.parm")]
     meta["backend"] = a.backend
-    s = SitlRun(os.path.join(ROOT, "results", name), params=params, bridge_args=bargs, speedup=speedup, home=home_str(),
+    s = new_run(name, params=params, bridge_args=bargs, speedup=speedup,
                 rate_hz=a.rate if a.backend == "jsbsim" else None, backend=a.backend, extra_parm_files=extra)
     s.start()
     try:
@@ -122,6 +135,28 @@ def t_mission(a, name=None, l1=None, wind=None, turb=None, speedup=100):
     return finish(s, name, "mission", meta)
 
 
+def t_smoke(a):
+    """Quick end-to-end check: hand launch, climb, 4-waypoint box (~1.2 km), RTL."""
+    name = a.name or "smoke"
+    items = takeoff_items(alt=CFG["takeoff_alt"])
+    for dn, de in [(300, 0), (300, 250), (0, 250), (0, 0)]:
+        lat, lon = ll_offset(HOME[0], HOME[1], dn, de)
+        items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=lat, lon=lon, alt=CFG["survey_alt"]))
+    items.append(dict(cmd=M.MAV_CMD_NAV_RETURN_TO_LAUNCH))
+    meta = dict(n_wp=4)
+    s = new_run(name)
+    s.start()
+    try:
+        launch_and_climb(s, items, alt=CFG["takeoff_alt"])
+        s.wait(lambda: s.mode == "RTL", timeout=600)
+        s.event("rtl")
+        s.sleep(30)
+    except Exception as ex:
+        traceback.print_exc()
+        meta["error"] = str(ex)
+    return finish(s, name, "smoke", meta)
+
+
 def t_l1sweep(a):
     out = {}
     for p in [float(x) for x in a.periods.split(",")]:
@@ -134,7 +169,7 @@ def t_cruise(a):
     items = takeoff_items(alt=60)
     far_lat, far_lon = ll_offset(HOME[0], HOME[1], 30000, 0)
     items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=far_lat, lon=far_lon, alt=60))
-    s = SitlRun(os.path.join(ROOT, "results", name), params={"AIRSPEED_MAX": 22, "AIRSPEED_MIN": 9}, home=home_str())
+    s = new_run(name, params={"AIRSPEED_MIN": max(a.speeds_min, 9)})
     s.start()
     meta = {"segments": []}
     try:
@@ -158,8 +193,7 @@ def t_stall(a):
     items = takeoff_items(alt=80)
     far_lat, far_lon = ll_offset(HOME[0], HOME[1], 20000, 0)
     items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=far_lat, lon=far_lon, alt=100))
-    s = SitlRun(os.path.join(ROOT, "results", name), params={"RC_OVERRIDE_TIME": -1, "STALL_PREVENTION": 0},
-                home=home_str())
+    s = new_run(name, params={"RC_OVERRIDE_TIME": -1, "STALL_PREVENTION": 0})
     s.start()
     meta = {"stalls": []}
     try:
@@ -193,17 +227,14 @@ def t_launch(a):
     items = takeoff_items(alt=40)
     items.append(dict(cmd=M.MAV_CMD_NAV_LOITER_UNLIM, lat=HOME[0] + 0.002, lon=HOME[1], alt=40))
     # override launch strength through a temp model copy
-    mpath = os.path.join(ROOT, "generated", "stork_p0", "stork_p0.json")
-    s = SitlRun(os.path.join(ROOT, "results", name), home=home_str(),
-                bridge_args=[], log_hz=100)
+    mpath = os.path.join(CFG["gen_dir"], CFG["model"] + ".json")
+    s = new_run(name, bridge_args=[], log_hz=100)
     # patch launch params via bridge model copy
     m = json.load(open(mpath))
     m["launch"]["accel_mps2"] = a.accel
     m["launch"]["duration_s"] = a.dur
-    os.makedirs(os.path.join(ROOT, "generated", "stork_p0_launch"), exist_ok=True)
     meta = dict(accel=a.accel, dur=a.dur, release_speed_est=a.accel * a.dur)
-    s.model = "stork_p0"
-    tmp = os.path.join(ROOT, "results", name + "_model.json")
+    tmp = os.path.join(CFG["results"], name + "_model.json")
     json.dump(m, open(tmp, "w"))
     s.bridge_args = ["--model", tmp]  # later --model wins in argparse
     s.start()
@@ -230,8 +261,8 @@ def t_failsafe(a, kind):
     if kind == "batt":
         bargs = ["--soc", str(a.soc)]
         # time-box: raise the low-voltage threshold so the (sag-compensated) voltage trips it within minutes
-        params["BATT_LOW_VOLT"] = 13.95
-    s = SitlRun(os.path.join(ROOT, "results", name), params=params, bridge_args=bargs, home=home_str())
+        params["BATT_LOW_VOLT"] = a.batt_low_volt
+    s = new_run(name, params=params, bridge_args=bargs)
     s.start()
     meta.update(fs=kind)
     try:
@@ -265,14 +296,13 @@ def t_vtol(a):
     name = a.name or "vtol"
     items = [dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=HOME[0], lon=HOME[1], alt=0),
              dict(cmd=M.MAV_CMD_NAV_VTOL_TAKEOFF, alt=30)]
-    for dn, de in [(400, 0), (400, 300), (0, 300), (-100, 0)]:
+    for dn, de in getattr(a, "vtol_box", [(400, 0), (400, 300), (0, 300), (-100, 0)]):
         lat, lon = ll_offset(HOME[0], HOME[1], dn, de)
         items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=lat, lon=lon, alt=50))
     items.append(dict(cmd=M.MAV_CMD_NAV_VTOL_LAND, lat=HOME[0], lon=HOME[1], alt=0))
     bargs = ["--start", "ground"] + (["--wind", a.wind] if a.wind else [])
-    s = SitlRun(os.path.join(ROOT, "results", name), model="stork_vtol", rate_hz=1200, bridge_args=bargs,
-                extra_parm_files=[os.path.join(ROOT, "params", "stork_vtol_sitl.parm")], home=home_str())
-    meta = dict(model="stork_vtol", n_items=len(items))
+    s = new_run(name, rate_hz=1200, bridge_args=bargs)
+    meta = dict(model=CFG["model"], n_items=len(items), wind=a.wind)
     s.start()
     try:
         s.wait_ready()

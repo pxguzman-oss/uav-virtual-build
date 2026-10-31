@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/dronelab/aircraft_model.schema.json",
+  "title": "DroneLab virtual-build aircraft model (flight-sim input contract) v1",
+  "description": "Single source of truth handed from the geometry/mass and aero/CFD stages to the flight-simulation stage. All units SI (m, kg, s, N, rad) unless the key name says otherwise (_deg, _mm, _rpm, _ah, _wh). FRAME: JSBSim structural frame = origin at wing-root leading edge on the centreline, +X AFT, +Y RIGHT (starboard), +Z UP. Body axes used for inertia and aero derivatives are the usual flight-mechanics axes (+x forward, +y right, +z down) through the CG. Aero coefficients use standard stability-axis conventions (CL up, CD opposite velocity, Cl right-wing-down positive, Cm nose-up positive, Cn nose-right positive) and are referenced to geometry.wing_area_m2, span_m (lateral) and mac_m (pitch), about aero.moment_ref_m. Control-surface deflection is positive TRAILING-EDGE-DOWN for every physical surface (for a V-tail panel 'down' means towards the panel's lower/outboard side).",
+  "type": "object",
+  "required": ["schema_version", "name", "geometry", "mass", "aero", "surfaces", "propulsion", "battery"],
+  "additionalProperties": true,
+  "$defs": {
+    "vec3": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+    "table1d": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": {"type": "array", "items": {"type": "number"}, "minItems": 2},
+        "y": {"type": "array", "items": {"type": "number"}, "minItems": 2}
+      }
+    },
+    "pwm": {
+      "type": "object",
+      "description": "Mapping from the ArduPilot SERVOn output to the physical actuator.",
+      "required": ["channel"],
+      "properties": {
+        "channel": {"type": "integer", "minimum": 1, "maximum": 32, "description": "1-based SERVOn index as wired on the FC (SERVOn_FUNCTION must match the ArduPilot param file)."},
+        "min": {"type": "number", "default": 1000},
+        "trim": {"type": "number", "default": 1500},
+        "max": {"type": "number", "default": 2000},
+        "sign": {"type": "number", "enum": [-1, 1], "default": 1, "description": "+1: PWM above trim gives positive (TE-down) deflection. Encodes physical servo orientation."}
+      }
+    },
+    "surface": {
+      "type": "object",
+      "required": ["name", "pwm", "max_deflection_deg", "derivatives_per_rad"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "kind": {"type": "string", "enum": ["aileron", "elevator", "rudder", "ruddervator", "elevon", "flap", "flaperon", "other"]},
+        "pwm": {"$ref": "#/$defs/pwm"},
+        "max_deflection_deg": {"type": "number", "exclusiveMinimum": 0, "description": "Mechanical throw at full PWM (min/max). Symmetric unless min_deflection_deg given."},
+        "min_deflection_deg": {"type": "number"},
+        "rate_limit_deg_s": {"type": "number", "default": 300, "description": "Servo slew rate under load."},
+        "lag_s": {"type": "number", "default": 0.02, "description": "First-order servo lag time constant."},
+        "derivatives_per_rad": {
+          "type": "object",
+          "description": "Increment in total-aircraft coefficients per radian of THIS surface's deflection (positive TE down). Provide all six; zeros allowed.",
+          "properties": {
+            "CL": {"type": "number"}, "CD_abs": {"type": "number", "description": "Drag increment per |rad| (always positive)."},
+            "CY": {"type": "number"}, "Cl": {"type": "number"}, "Cm": {"type": "number"}, "Cn": {"type": "number"}
+          }
+        }
+      }
+    },
+    "motor": {
+      "type": "object",
+      "required": ["name", "pwm", "position_m", "thrust_dir_body", "motor", "prop"],
+      "properties": {
+        "name": {"type": "string"},
+        "role": {"type": "string", "enum": ["forward", "lift"], "default": "forward"},
+        "pwm": {"$ref": "#/$defs/pwm"},
+        "position_m": {"$ref": "#/$defs/vec3", "description": "Prop hub in structural frame (X aft, Y right, Z up)."},
+        "thrust_dir_body": {"$ref": "#/$defs/vec3", "description": "Unit thrust vector in BODY axes (+x fwd,+y right,+z down). Pusher = [1,0,0]; lift rotor = [0,0,-1]."},
+        "spin": {"type": "integer", "enum": [-1, 1], "description": "+1 = prop rotates clockwise seen from behind (torque reaction rolls aircraft left / for lift rotors: CW seen from above gives nose-left yaw reaction)."},
+        "motor": {
+          "type": "object",
+          "required": ["kv_rpm_per_v", "rm_ohm", "i0_a"],
+          "properties": {
+            "kv_rpm_per_v": {"type": "number"},
+            "rm_ohm": {"type": "number", "description": "Winding resistance incl. ESC FETs and wires."},
+            "i0_a": {"type": "number", "description": "No-load current at i0_ref_v."},
+            "i0_ref_v": {"type": "number", "default": 10},
+            "i_max_a": {"type": "number"},
+            "rotor_inertia_kgm2": {"type": "number", "default": 1.5e-05},
+            "mass_kg": {"type": "number"}
+          }
+        },
+        "esc": {
+          "type": "object",
+          "properties": {
+            "pwm_min": {"type": "number", "default": 1000}, "pwm_max": {"type": "number", "default": 2000},
+            "spin_min": {"type": "number", "default": 0.0}, "regen": {"type": "boolean", "default": false},
+            "efficiency": {"type": "number", "default": 0.97}
+          }
+        },
+        "prop": {
+          "type": "object",
+          "required": ["diameter_m", "table"],
+          "properties": {
+            "label": {"type": "string"},
+            "diameter_m": {"type": "number"}, "pitch_m": {"type": "number"},
+            "inertia_kgm2": {"type": "number"},
+            "thrust_scale": {"type": "number", "default": 1.0, "description": "Correction to vendor data (APC PER3 data typically optimistic; 0.85-0.95 typical)."},
+            "power_scale": {"type": "number", "default": 1.0},
+            "table": {
+              "type": "object",
+              "description": "Non-dimensional prop map. CT = T/(rho n^2 D^4), CP = P/(rho n^3 D^5), J = V/(nD), n in rev/s. Optional 'rpm' list gives one CT/CP row per rpm (2-D table).",
+              "required": ["J", "CT", "CP"],
+              "properties": {
+                "J": {"type": "array", "items": {"type": "number"}},
+                "rpm": {"type": "array", "items": {"type": "number"}},
+                "CT": {"type": "array"}, "CP": {"type": "array"},
+                "source": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$"},
+    "provenance": {
+      "type": "object",
+      "description": "Who produced each block and how (CAD rev, CFD tool, date). Free-form but required for traceability.",
+      "additionalProperties": {"type": "string"}
+    },
+    "geometry": {
+      "type": "object",
+      "required": ["wing_area_m2", "span_m", "mac_m"],
+      "properties": {
+        "wing_area_m2": {"type": "number"}, "span_m": {"type": "number"}, "mac_m": {"type": "number"},
+        "mac_le_x_m": {"type": "number", "description": "X (aft) of MAC leading edge in structural frame."},
+        "htail_area_m2": {"type": "number"}, "vtail_area_m2": {"type": "number"},
+        "length_m": {"type": "number"}
+      }
+    },
+    "mass": {
+      "type": "object",
+      "required": ["mass_kg", "cg_m", "inertia_kgm2"],
+      "properties": {
+        "mass_kg": {"type": "number", "description": "All-up mass for the flight case."},
+        "cg_m": {"$ref": "#/$defs/vec3", "description": "CG in structural frame (X aft of root LE, Y right, Z up)."},
+        "inertia_kgm2": {
+          "type": "object",
+          "required": ["Ixx", "Iyy", "Izz", "Ixz"],
+          "description": "About the CG in body axes (+x fwd, +y right, +z down). Ixz with the JSBSim sign convention: Ixz = +integral(x z dm) (JSBSim negates internally).",
+          "properties": {"Ixx": {"type": "number"}, "Iyy": {"type": "number"}, "Izz": {"type": "number"}, "Ixz": {"type": "number"}, "Ixy": {"type": "number", "default": 0}, "Iyz": {"type": "number", "default": 0}}
+        },
+        "cases": {"type": "array", "description": "Optional alternate mass cases (e.g. VTOL, payload).", "items": {"type": "object"}}
+      }
+    },
+    "aero": {
+      "type": "object",
+      "required": ["moment_ref_m"],
+      "description": "Either supply alpha_tables (preferred, from CFD/VLM+XFOIL incl. post-stall) or derivatives (+stall model) or both; tables override the corresponding derivative terms.",
+      "properties": {
+        "moment_ref_m": {"$ref": "#/$defs/vec3", "description": "Aero reference point in structural frame. Cm data must be about this point."},
+        "reynolds_ref": {"type": "number"},
+        "alpha_tables": {
+          "type": "object",
+          "description": "Longitudinal static data vs body angle of attack (deg) at beta=0, controls neutral. Should span at least -20..+30 deg; the generator blends to flat-plate beyond the given range.",
+          "required": ["alpha_deg", "CL", "CD", "Cm"],
+          "properties": {
+            "alpha_deg": {"type": "array", "items": {"type": "number"}},
+            "CL": {"type": "array", "items": {"type": "number"}},
+            "CD": {"type": "array", "items": {"type": "number"}},
+            "Cm": {"type": "array", "items": {"type": "number"}}
+          }
+        },
+        "derivatives": {
+          "type": "object",
+          "description": "Linear/stability derivatives per radian (rate derivatives non-dimensionalised with c/2V or b/2V). Used to synthesise tables when alpha_tables is absent, and always for lateral/rate terms.",
+          "properties": {
+            "CL0": {"type": "number"}, "CLa": {"type": "number"}, "CLq": {"type": "number"}, "CLmax": {"type": "number"},
+            "alpha_stall_deg": {"type": "number"}, "CL_post_stall_drop": {"type": "number", "default": 0.3},
+            "CD0": {"type": "number"}, "oswald": {"type": "number"}, "CD_beta2": {"type": "number", "default": 0.3},
+            "Cm0": {"type": "number"}, "Cma": {"type": "number"}, "Cmq": {"type": "number"}, "Cmadot": {"type": "number", "default": 0},
+            "CYb": {"type": "number"}, "CYp": {"type": "number"}, "CYr": {"type": "number"},
+            "Clb": {"type": "number"}, "Clp": {"type": "number"}, "Clr": {"type": "number"},
+            "Cnb": {"type": "number"}, "Cnp": {"type": "number"}, "Cnr": {"type": "number"}
+          }
+        }
+      }
+    },
+    "surfaces": {"type": "array", "items": {"$ref": "#/$defs/surface"}},
+    "propulsion": {
+      "type": "object",
+      "required": ["motors"],
+      "properties": {"motors": {"type": "array", "items": {"$ref": "#/$defs/motor"}, "minItems": 1}}
+    },
+    "battery": {
+      "type": "object",
+      "required": ["cells_series", "cells_parallel", "cell_capacity_ah", "cell_r_dc_ohm", "ocv_table"],
+      "properties": {
+        "chemistry": {"type": "string"},
+        "cell": {"type": "string"},
+        "cells_series": {"type": "integer"}, "cells_parallel": {"type": "integer"},
+        "cell_capacity_ah": {"type": "number"},
+        "cell_r_dc_ohm": {"type": "number", "description": "Cell DC internal resistance (e.g. datasheet DCIR at 50% SOC)."},
+        "cell_rc_r_ohm": {"type": "number", "default": 0, "description": "Optional 1-RC polarisation branch resistance per cell."},
+        "cell_rc_tau_s": {"type": "number", "default": 30},
+        "pack_extra_r_ohm": {"type": "number", "default": 0.01, "description": "Interconnects, connector, wiring."},
+        "ocv_table": {"type": "object", "required": ["soc", "v_cell"], "properties": {"soc": {"type": "array"}, "v_cell": {"type": "array"}}},
+        "v_cell_cutoff": {"type": "number", "default": 2.8},
+        "initial_soc": {"type": "number", "default": 1.0},
+        "mass_kg": {"type": "number"}
+      }
+    },
+    "electrical": {
+      "type": "object",
+      "properties": {"avionics_power_w": {"type": "number", "default": 4.0, "description": "FC + GPS + RX + telemetry + camera + servos average."}}
+    },
+    "ground": {
+      "type": "object",
+      "properties": {
+        "contacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "position_m"],
+            "properties": {
+              "name": {"type": "string"}, "position_m": {"$ref": "#/$defs/vec3"},
+              "static_friction": {"type": "number", "default": 0.6}, "dynamic_friction": {"type": "number", "default": 0.5},
+              "spring_n_per_m": {"type": "number", "default": 3000}, "damping_n_s_per_m": {"type": "number", "default": 60}
+            }
+          }
+        }
+      }
+    },
+    "launch": {
+      "type": "object",
+      "description": "Hand-launch (throw) model used by the bridge.",
+      "properties": {
+        "type": {"type": "string", "enum": ["hand", "bungee", "catapult", "vtol", "runway"]},
+        "hold_height_m": {"type": "number", "default": 1.6},
+        "hold_pitch_deg": {"type": "number", "default": 8},
+        "accel_mps2": {"type": "number", "default": 25},
+        "duration_s": {"type": "number", "default": 0.4},
+        "release_pitch_deg": {"type": "number", "default": 10}
+      }
+    },
+    "ardupilot": {
+      "type": "object",
+      "description": "Params that must agree with the model (written into the generated .parm).",
+      "additionalProperties": {"type": "number"}
+    }
+  }
+}

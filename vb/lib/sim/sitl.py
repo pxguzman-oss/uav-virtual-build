@@ -10,18 +10,20 @@ No MAVProxy / GUI needed: pymavlink talks straight to SITL's TCP 5760.
 import json, math, os, shutil, signal, socket, subprocess, threading, time
 from pymavlink import mavutil
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-AP = os.path.join(ROOT, "ardupilot")
-ARDUPLANE = os.path.join(AP, "build", "sitl", "bin", "arduplane")
-PY = os.path.join("/home/claude/venvs/sim/bin/python")
+import sys
+ROOT = os.path.abspath(os.path.dirname(__file__))
+ARDUPLANE = os.environ.get("VB_ARDUPLANE", "arduplane")       # set by vb.stages.sitl from vb.env
+PY = sys.executable
 DEFAULT_HOME = "-35.363262,149.165237,584,0"   # ArduPilot CMAC test field, heading north
 
 
 class SitlRun:
     def __init__(self, outdir, model="stork_p0", speedup=100, home=DEFAULT_HOME, params=None,
                  bridge_args=None, extra_parm_files=None, instance=0, backend="jsbsim", rate_hz=None,
-                 log_hz=25):
+                 log_hz=25, gen_dir=None, parm_files=None):
         self.outdir = os.path.abspath(outdir)
+        self.gen_dir = gen_dir
+        self.parm_files = parm_files
         self.model = model
         self.speedup = speedup
         self.home = home
@@ -65,8 +67,8 @@ class SitlRun:
         if os.path.exists(self.outdir):
             shutil.rmtree(self.outdir)
         os.makedirs(self.outdir)
-        gen = os.path.join(ROOT, "generated", self.model)
-        parms = [os.path.join(gen, f"{self.model}_model.parm"), os.path.join(ROOT, "params", "stork_sitl.parm")]
+        gen = self.gen_dir or os.path.join(ROOT, "generated", self.model)
+        parms = list(self.parm_files) if self.parm_files else [os.path.join(gen, f"{self.model}_model.parm")]
         parms += self.extra
         # write run-specific param overrides into a parm file so they are defaults at boot
         over = os.path.join(self.outdir, "overrides.parm")
@@ -80,7 +82,7 @@ class SitlRun:
         if self.backend == "jsbsim":
             blog = open(os.path.join(self.outdir, "bridge.out"), "w")
             hdg = self.home.split(",")
-            cmd = [PY, os.path.join(ROOT, "tools", "bridge.py"), "--model", os.path.join(gen, f"{self.model}.json"),
+            cmd = [PY, os.path.join(ROOT, "bridge.py"), "--model", os.path.join(gen, f"{self.model}.json"),
                    "--jsbsim-dir", os.path.join(gen, "jsbsim"), "--home=" + self.home,
                    "--port", str(9002 + 10 * self.inst), "--ctl-port", str(9012 + 10 * self.inst),
                    "--log", os.path.join(self.outdir, "truth.csv"), "--log-hz", str(self.log_hz)] + self.bridge_args

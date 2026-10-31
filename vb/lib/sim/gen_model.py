@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover
     jsonschema = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCHEMA = os.path.join(HERE, "..", "schema", "aircraft_model.schema.json")
+SCHEMA = os.path.join(HERE, "aircraft_model.schema.json")
 RHO0 = 1.225
 G = 9.80665
 FT = 0.3048

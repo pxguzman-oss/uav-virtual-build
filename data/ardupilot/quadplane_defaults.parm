@@ -1,0 +1,17 @@
+# QuadPlane add-on defaults (loaded after plane_defaults.parm for variants with lift units)
+Q_ENABLE        1
+Q_FRAME_CLASS   1
+Q_FRAME_TYPE    1
+Q_M_PWM_TYPE    0
+Q_M_PWM_MIN     1000
+Q_M_PWM_MAX     2000
+Q_M_SPIN_ARM    0.08
+Q_M_SPIN_MIN    0.12
+Q_M_THST_EXPO   0.55
+Q_TRANSITION_MS 4000
+Q_RTL_MODE      1
+Q_OPTIONS       0
+Q_WVANE_ENABLE  0
+Q_GUIDED_MODE   1
+Q_TRAN_PIT_MAX  3
+SCHED_LOOP_RATE 300

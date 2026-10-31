@@ -22,8 +22,8 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import brentq
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import buildplan as bp  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from vb import plan as bp  # noqa: E402
 
 RHO0 = 1.225
 G = 9.80665
@@ -57,21 +57,43 @@ AWG_CHASSIS_A = {10: 55, 12: 41, 14: 32, 16: 22, 18: 16, 20: 11}   # chassis-wir
 
 
 class Prop:
-    def __init__(self, cfg):
+    """CT/CP(J[, rpm]) from data/props/<key>.json (APC PER3 / UIUC) or the embedded fallback tables."""
+    DATA = Path(__file__).resolve().parents[3] / "data" / "props"
+
+    def __init__(self, cfg, base_dir=None):
         self.D = cfg["diameter"]
-        key = cfg.get("data", "").replace("embedded:", "")
-        tab = PROP_DB[key]
-        self.J, self.Ct, self.Cp = tab[:, 0], tab[:, 1], tab[:, 2]
+        ref = cfg.get("data", "")
+        key = ref.replace("embedded:", "")
+        f = self.DATA / f"{key}.json" if ref.startswith("embedded:") else Path(base_dir or ".") / ref
+        if f.exists():
+            t = json.loads(f.read_text())
+            self.J = np.asarray(t["J"], float)
+            CT, CP = np.asarray(t["CT"], float), np.asarray(t["CP"], float)
+            self.rpm = np.asarray(t["rpm"], float) if t.get("rpm") and CT.ndim == 2 else None
+            self.CT = CT if CT.ndim == 2 else CT[None, :]
+            self.CP = CP if CP.ndim == 2 else CP[None, :]
+            self.source = t.get("source", str(f))
+        else:
+            tab = PROP_DB[key]
+            self.J, self.CT, self.CP, self.rpm = tab[:, 0], tab[None, :, 1], tab[None, :, 2], None
+            self.source = "embedded table"
         self.ks, self.kp = cfg.get("ct_scale", 1.0), cfg.get("cp_scale", 1.0)
         self.name = cfg.get("model", key)
 
-    def coeffs(self, J):
+    def coeffs(self, J, rpm=None):
         J = min(max(J, 0.0), self.J[-1])
-        return self.ks * np.interp(J, self.J, self.Ct), self.kp * np.interp(J, self.J, self.Cp)
+        ct = [np.interp(J, self.J, row) for row in self.CT]
+        cp = [np.interp(J, self.J, row) for row in self.CP]
+        if self.rpm is not None and rpm is not None and len(ct) > 1:
+            r = min(max(rpm, self.rpm[0]), self.rpm[-1])
+            ct, cp = np.interp(r, self.rpm, ct), np.interp(r, self.rpm, cp)
+        else:
+            ct, cp = ct[-1], cp[-1]
+        return self.ks * ct, self.kp * cp
 
     def thrust_torque(self, rpm, V, rho):
         n = max(rpm, 1e-3) / 60.0
-        ct, cp = self.coeffs(V / (n * self.D))
+        ct, cp = self.coeffs(V / (n * self.D), rpm)
         T = ct * rho * n * n * self.D ** 4
         P = cp * rho * n ** 3 * self.D ** 5
         return T, P / (2 * math.pi * n), P

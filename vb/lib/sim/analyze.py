@@ -31,6 +31,7 @@ plt.rcParams.update({
 })
 G = 9.80665
 HOME = (-35.363262, 149.165237)
+USABLE_WH = 144.0 * 0.85      # replaced per run from the model battery
 
 
 def load_df(path, types):
@@ -234,7 +235,7 @@ def analyze_cruise(run, meta, tr, df, events, model=None):
                          Wh_per_km=round(Pcorr / (V * 3.6), 3)))
     if not rows:
         return {"error": "no segments"}
-    usable = 144.0 * 0.85
+    usable = USABLE_WH
     for r in rows:
         r["range_km_usable"] = round(usable / r["Wh_per_km"], 1)
         r["endurance_h_usable"] = round(usable / r["P_level_W"], 2)
@@ -381,7 +382,12 @@ def analyze_vtol(run, meta, tr, df, events):
         res["hover_power_W"] = round(float(hov.P_elec_W.median()), 1)
         res["hover_current_A"] = round(float(hov.I_bat.median()), 1)
         res["hover_lift_rpm"] = round(float(hov.lift_rpm_mean.median()), 0)
-        res["hover_endurance_min_on_usable"] = round(144 * 0.85 / res["hover_power_W"] * 60, 1)
+        res["hover_endurance_min_on_usable"] = round(USABLE_WH / res["hover_power_W"] * 60, 1)
+        res["hover_throttle_lift"] = round(float(hov[[c for c in tr.columns if c.startswith("thr_lift")]].mean(axis=1).median()), 3) \
+            if any(c.startswith("thr_lift") for c in tr.columns) else None
+        if df and "QTUN" in df and len(df["QTUN"]):
+            q = df["QTUN"]
+            res["ap_QTUN_ThO_median"] = round(float(q.ThO.median()), 3)
     fw = tr[(tr.lift_rpm_mean < 500) & (tr.h_agl > 20)]
     if len(fw):
         res["fw_cruise_power_W"] = round(float(fw.P_elec_W.median()), 1)
@@ -402,6 +408,25 @@ def analyze_vtol(run, meta, tr, df, events):
     ax[0].set_title("QuadPlane VTOL mission (JSBSim bridge, 5 motors)", loc="left")
     save(fig, run, "vtol.png")
     return res
+
+
+def envelope_metrics(tr):
+    """max |nz|, max airspeed, throttle saturation in flight (truth log)."""
+    out = {}
+    fl = tr[(tr.state != "HELD") & (tr.h_agl > 5)] if "state" in tr else tr
+    if len(fl):
+        out["max_nz"] = round(float(fl.nz.max()), 2)
+        out["min_nz"] = round(float(fl.nz.min()), 2)
+        out["max_cas"] = round(float(fl.V_cas.max()), 2)
+        out["max_alpha_deg"] = round(float(fl.alpha_deg.max()), 1)
+        dt = float(np.median(np.diff(fl.t))) if len(fl) > 2 else 0.04
+        sat = (fl.throttle >= 0.99).values
+        run_, best = 0, 0
+        for v in sat:
+            run_ = run_ + 1 if v else 0
+            best = max(best, run_)
+        out["max_throttle_saturation_s"] = round(best * dt, 1)
+    return out
 
 
 def truth_from_bin(bp):
@@ -437,9 +462,13 @@ def analyze_run(run):
     fl = tr[(tr.state != "HELD") & (tr.h_agl > 10)] if "state" in tr else tr
     if len(fl) and fl.CL.median() < 0:   # logs written before the JSBSim wind-axis sign fix
         tr["CL"] = -tr["CL"]; tr["CD"] = -tr["CD"]
-    mname = meta.get("model", "stork_p0")
-    model = json.load(open(os.path.join(os.path.dirname(__file__), "..", "generated", mname, mname + ".json")))
-    df = load_df(bp, ["NTUN", "BAT", "MODE", "CAM", "TRIG", "CTUN", "AOA", "ARSP"]) if bp else None
+    mpath = meta.get("model_json") or os.path.join(os.path.dirname(__file__), "..", "generated", meta.get("model", "m"),
+                                                    meta.get("model", "m") + ".json")
+    model = json.load(open(mpath))
+    global USABLE_WH
+    b = model["battery"]
+    USABLE_WH = b["cells_series"] * b["cells_parallel"] * b["cell_capacity_ah"] * 3.6 * 0.85
+    df = load_df(bp, ["NTUN", "BAT", "MODE", "CAM", "TRIG", "CTUN", "AOA", "ARSP", "QTUN"]) if bp else None
     res = {"run": os.path.basename(run), "kind": meta["kind"], "bin": bp, "sim_s": meta.get("sim_s"),
            "wall_s": round(meta.get("wall_s", 0), 1)}
     res["speed_x_realtime"] = round(meta.get("sim_s", 0) / max(meta.get("wall_s", 1), 1), 1)
@@ -457,6 +486,9 @@ def analyze_run(run):
         res.update(analyze_fs(run, meta, tr, df, events))
     elif k == "vtol":
         res.update(analyze_vtol(run, meta, tr, df, events))
+    elif k == "smoke":
+        plot_timeseries(run, tr, events, f"{os.path.basename(run)} - smoke flight")
+    res.update(envelope_metrics(tr))
     if "error" in meta:
         res["run_error"] = meta["error"]
     json.dump(res, open(os.path.join(run, "metrics.json"), "w"), indent=1, default=str)
