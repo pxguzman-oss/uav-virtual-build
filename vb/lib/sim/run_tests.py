@@ -26,7 +26,38 @@ CFG = dict(results=os.path.abspath("results"), gen_dir=None, model="model", parm
            survey_alt=60, takeoff_alt=40, cruise_v=13.0)
 
 
-def new_run(name, **kw):
+def env_bargs(a):
+    """Bridge arguments for the run's environment (wind, Dryden turbulence, scripted gusts, air temperature)."""
+    b = []
+    if getattr(a, "wind", None):
+        b += ["--wind", a.wind]
+    if getattr(a, "turb", None):
+        b += ["--turb", a.turb]
+    if getattr(a, "gusts", None):
+        b += ["--gusts", a.gusts, "--seed", str(getattr(a, "seed", 1) or 1)]
+    if getattr(a, "temp_c", None) is not None:
+        b += ["--temp-c", str(a.temp_c)]
+    return b
+
+
+def env_meta(a):
+    return dict(wind=getattr(a, "wind", None), turb=getattr(a, "turb", None), gusts=getattr(a, "gusts", None),
+                temp_c=getattr(a, "temp_c", None), home_alt_m=getattr(a, "home_alt", None),
+                env_label=getattr(a, "env_label", None) or "calm (no wind, no turbulence, no gusts)")
+
+
+def run_home(a):
+    alt = getattr(a, "home_alt", None)
+    return f"{HOME[0]},{HOME[1]},{alt if alt is not None else HOME[2]},0"
+
+
+def new_run(name, a=None, **kw):
+    if a is not None:
+        kw.setdefault("home", run_home(a))
+        if getattr(a, "gen_dir", None):
+            kw.setdefault("gen_dir", a.gen_dir)
+        if getattr(a, "model", None):
+            kw.setdefault("model", a.model)
     kw.setdefault("model", CFG["model"])
     kw.setdefault("gen_dir", CFG["gen_dir"])
     kw.setdefault("parm_files", CFG["parm_files"])
@@ -101,24 +132,20 @@ def t_mission(a, name=None, l1=None, wind=None, turb=None, speedup=100):
     params = {}
     if l1 or a.l1:
         params["NAVL1_PERIOD"] = l1 or a.l1
-    bargs = []
     w = wind or a.wind
     tb = turb or a.turb
-    if w:
-        bargs += ["--wind", w]
-    if tb:
-        bargs += ["--turb", tb]
+    bargs = env_bargs(a)
     comp = None
     if a.compensate:
         per = params.get("NAVL1_PERIOD", 15)
         comp = 0.75 * per * CFG["cruise_v"] / math.pi   # L1 distance = damping*period*V/pi
     items, meta, cl = canal_items(spacing=a.spacing, comp_l1=comp)
-    meta.update(params=params, wind=w, turb=tb, compensated_L1_m=comp)
+    meta.update(params=params, compensated_L1_m=comp, **env_meta(a))
     extra = []
     if a.backend == "simplane":
         extra = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "data", "ardupilot", "simplane_vtail.parm")]
     meta["backend"] = a.backend
-    s = new_run(name, params=params, bridge_args=bargs, speedup=speedup,
+    s = new_run(name, a, params=params, bridge_args=bargs, speedup=speedup,
                 rate_hz=a.rate if a.backend == "jsbsim" else None, backend=a.backend, extra_parm_files=extra)
     s.start()
     try:
@@ -144,8 +171,8 @@ def t_smoke(a):
         lat, lon = ll_offset(HOME[0], HOME[1], dn, de)
         items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=lat, lon=lon, alt=CFG["survey_alt"]))
     items.append(dict(cmd=M.MAV_CMD_NAV_RETURN_TO_LAUNCH))
-    meta = dict(n_wp=4)
-    s = new_run(name)
+    meta = dict(n_wp=4, **env_meta(a))
+    s = new_run(name, a, bridge_args=env_bargs(a))
     s.start()
     try:
         launch_and_climb(s, items, alt=CFG["takeoff_alt"])
@@ -170,9 +197,9 @@ def t_cruise(a):
     items = takeoff_items(alt=60)
     far_lat, far_lon = ll_offset(HOME[0], HOME[1], 30000, 0)
     items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=far_lat, lon=far_lon, alt=60))
-    s = new_run(name, params={"AIRSPEED_MIN": max(a.speeds_min, 9)})
+    s = new_run(name, a, params={"AIRSPEED_MIN": max(a.speeds_min, 9)}, bridge_args=env_bargs(a))
     s.start()
-    meta = {"segments": []}
+    meta = {"segments": [], **env_meta(a)}
     try:
         launch_and_climb(s, items, alt=55)
         s.sleep(20)
@@ -194,9 +221,9 @@ def t_stall(a):
     items = takeoff_items(alt=80)
     far_lat, far_lon = ll_offset(HOME[0], HOME[1], 20000, 0)
     items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=far_lat, lon=far_lon, alt=100))
-    s = new_run(name, params={"RC_OVERRIDE_TIME": -1, "STALL_PREVENTION": 0})
+    s = new_run(name, a, params={"RC_OVERRIDE_TIME": -1, "STALL_PREVENTION": 0}, bridge_args=env_bargs(a))
     s.start()
-    meta = {"stalls": []}
+    meta = {"stalls": [], **env_meta(a)}
     try:
         launch_and_climb(s, items, alt=75)
         s.sleep(25)
@@ -228,16 +255,18 @@ def t_launch(a):
     items = takeoff_items(alt=40)
     items.append(dict(cmd=M.MAV_CMD_NAV_LOITER_UNLIM, lat=HOME[0] + 0.002, lon=HOME[1], alt=40))
     # override launch strength through a temp model copy
-    mpath = os.path.join(CFG["gen_dir"], CFG["model"] + ".json")
-    s = new_run(name, bridge_args=[], log_hz=100)
+    gdir = getattr(a, "gen_dir", None) or CFG["gen_dir"]
+    mname = getattr(a, "model", None) or CFG["model"]
+    mpath = os.path.join(gdir, mname + ".json")
+    s = new_run(name, a, bridge_args=[], log_hz=100)
     # patch launch params via bridge model copy
     m = json.load(open(mpath))
     m["launch"]["accel_mps2"] = a.accel
     m["launch"]["duration_s"] = a.dur
-    meta = dict(accel=a.accel, dur=a.dur, release_speed_est=a.accel * a.dur)
+    meta = dict(accel=a.accel, dur=a.dur, release_speed_est=a.accel * a.dur, model=mname, **env_meta(a))
     tmp = os.path.join(CFG["results"], name + "_model.json")
     json.dump(m, open(tmp, "w"))
-    s.bridge_args = ["--model", tmp]  # later --model wins in argparse
+    s.bridge_args = env_bargs(a) + ["--model", tmp]  # later --model wins in argparse
     s.start()
     try:
         s.wait_ready()
@@ -256,20 +285,20 @@ def t_failsafe(a, kind):
     name = a.name or f"fs_{kind}"
     items, meta, cl = canal_items(spacing=a.spacing)
     params = {}
-    bargs = []
+    bargs = env_bargs(a)
     if kind == "gcs":
         params["FS_GCS_ENABL"] = 1
     if kind == "batt":
-        bargs = ["--soc", str(a.soc)]
+        bargs += ["--soc", str(a.soc)]
         if getattr(a, "batt_low_mah", None):
             # time-box via the mAh failsafe (the one derived.param relies on for Li-ion): trips after ~150 mAh used
             params["BATT_LOW_MAH"] = a.batt_low_mah
         else:
             # legacy: raise the low-voltage threshold so the (sag-compensated) voltage trips it within minutes
             params["BATT_LOW_VOLT"] = a.batt_low_volt
-    s = new_run(name, params=params, bridge_args=bargs)
+    s = new_run(name, a, params=params, bridge_args=bargs)
     s.start()
-    meta.update(fs=kind)
+    meta.update(fs=kind, **env_meta(a))
     try:
         launch_and_climb(s, items)
         s.wait(lambda: s.mission_seq >= meta["first_wp"] + 10, timeout=300)
@@ -305,9 +334,9 @@ def t_vtol(a):
         lat, lon = ll_offset(HOME[0], HOME[1], dn, de)
         items.append(dict(cmd=M.MAV_CMD_NAV_WAYPOINT, lat=lat, lon=lon, alt=50))
     items.append(dict(cmd=M.MAV_CMD_NAV_VTOL_LAND, lat=HOME[0], lon=HOME[1], alt=0))
-    bargs = ["--start", "ground"] + (["--wind", a.wind] if a.wind else [])
-    s = new_run(name, rate_hz=1200, bridge_args=bargs)
-    meta = dict(model=CFG["model"], n_items=len(items), wind=a.wind)
+    bargs = ["--start", "ground"] + env_bargs(a)
+    s = new_run(name, a, rate_hz=1200, bridge_args=bargs)
+    meta = dict(model=CFG["model"], n_items=len(items), **env_meta(a))
     s.start()
     try:
         s.wait_ready()

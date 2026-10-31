@@ -226,6 +226,14 @@ class Bridge:
         if a.turb:
             sev, w20 = a.turb.split(",")
             self.turb = (int(sev), float(w20))
+        # scripted discrete 1-cosine HORIZONTAL gusts (review C2): amp [m/s] above the mean wind, every period [s],
+        # duration [s], random horizontal direction (seeded -> reproducible); start once airborne
+        self.gust_cfg = None
+        self.next_gust = None
+        if getattr(a, "gusts", None):
+            amp, per, dur = [float(x) for x in a.gusts.split(",")[:3]]
+            self.gust_cfg = (amp, per, dur)
+            self.rng = np.random.default_rng(int(getattr(a, "seed", 1) or 1))
 
     # ------------------------------------------------------------------ JSBSim
     def init_fdm(self, dt):
@@ -239,6 +247,10 @@ class Bridge:
         fdm["ic/lat-geod-deg"] = lat
         fdm["ic/long-gc-deg"] = lon
         fdm["ic/terrain-elevation-ft"] = alt / FT
+        if getattr(self.a, "temp_c", None) is not None:
+            # ISA + delta-T so the air density matches the plan environment case (review M1/C2)
+            T_isa = 15.0 - 0.0065 * alt
+            fdm["atmosphere/delta-T"] = (float(self.a.temp_c) - T_isa) * 1.8
         L = self.launch
         if self.state in ("HELD", "LAUNCH", "FREE"):
             fdm["ic/h-agl-ft"] = L.get("hold_height_m", 1.6) / FT
@@ -259,6 +271,19 @@ class Bridge:
     def set_wind(self, spd, from_deg, down=0.0):
         to = math.radians(from_deg + 180.0)
         self.wind_ned = np.array([spd * math.cos(to), spd * math.sin(to), down])
+
+    def scripted_gusts(self):
+        if not self.gust_cfg or self.state not in ("FREE", "GROUND") or self.fdm["position/h-agl-ft"] * FT < 3.0:
+            return
+        amp, per, dur = self.gust_cfg
+        if self.next_gust is None:
+            self.next_gust = self.t + 0.5 * per
+        if self.t >= self.next_gust:
+            ang = self.rng.uniform(0, 2 * math.pi)
+            self.gusts.append((self.t, dur, [amp * math.cos(ang), amp * math.sin(ang), 0.0]))
+            self.mark = f"gust {amp:.1f} m/s dir {math.degrees(ang):.0f}"
+            self.next_gust = self.t + per
+            self.gusts = [g for g in self.gusts if g[0] + g[1] >= self.t - 1]
 
     def wind_now(self):
         w = self.wind_ned.copy()
@@ -343,6 +368,7 @@ class Bridge:
             Itot += mo.Ibat
         self.bat.step(Itot, self.dt)
         self.surface_cmds(pwm)
+        self.scripted_gusts()
         self.apply_wind()
 
         if self.state == "HELD":
@@ -535,6 +561,9 @@ def main():
     ap.add_argument("--soc", type=float, default=None)
     ap.add_argument("--wind", default=None, help="speed_mps,from_deg")
     ap.add_argument("--turb", default=None, help="severity(1-7),w20_mps")
+    ap.add_argument("--gusts", default=None, help="amp_mps,period_s,duration_s: periodic 1-cos horizontal gusts once airborne")
+    ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--temp-c", dest="temp_c", type=float, default=None, help="air temperature at home [C] (ISA + delta-T)")
     ap.add_argument("--log", default=None)
     ap.add_argument("--log-hz", type=float, default=25)
     a = ap.parse_args()

@@ -490,7 +490,7 @@ def run(ctx):
             D.table(["status", "check", "value", "limit", "note"],
                     [[g["status"], g["check"], fmt(g["value"]) + (f" {g['unit']}" if g.get("unit") and isinstance(g["value"], (int, float)) else ""),
                       (g["kind"] + " " + fmt(g["limit"])) if g["kind"] not in ("bool", "info") else ("must be true" if g["kind"] == "bool" else "-"),
-                      (g.get("note") or "")[:160]] for g in r["gates"]], status_col=0)
+                      (g.get("note") or "").split(" | env: ")[0][:220]] for g in r["gates"]], status_col=0)
         if r.get("notes"):
             D.ul(r["notes"])
         figs = [f for f in r.get("files", []) if f.get("kind") == "figure" and not (s == "geometry")]
@@ -529,6 +529,10 @@ def run(ctx):
             D.table(["derivative", "value /rad"], [[k, fmt(v)] for k, v in d["derivatives"].items() if v is not None])
         if s == "sitl" and stage_ok("sitl"):
             res = r["data"]["results"]
+            D.p("Environment of every SITL run (gates are tagged [calm] or [wind+gust+turb]). "
+                + ("QUICK fidelity: calm air only - no wind, gust or turbulence case was flown." if r.get("fidelity") == "quick" else
+                   "Standard/full fidelity fly a calm baseline AND the mission's own environment case."))
+            D.table(["run", "environment", "model flown"], [[n, v.get("environment", "?"), v.get("model_flown", "-")] for n, v in res.items()])
             keys = ["wall_s_total", "flight_time_s", "energy_used_Wh_truth", "course_Wh_per_km", "course_mean_power_W", "xt_truth_rms_m",
                     "max_cas", "min_airspeed_inflight", "max_nz", "max_throttle_saturation_s", "hover_power_W", "landing_pos_error_m"]
             D.table(["run"] + keys, [[n] + [fmt(v.get(k)) for k in keys] for n, v in res.items()])
