@@ -500,8 +500,9 @@ def run(ctx):
         worst_k = min(cands, key=lambda k: cands[k][0])
         lo_r, hi_r = min(v[0] for v in cands.values()), max(v[0] for v in cands.values())
         lo_e, hi_e = min(v[1] for v in cands.values()), max(v[1] for v in cands.values())
+        no_sitl = "" if en.get("calm") else " No SITL fixed-wing energy run in this variant's matrix (steady model only)."
         key_rows.append([f"range at {rb['V']:g} m/s on usable energy (UNCALIBRATED)", f"CONSERVATIVE {cands[worst_k][0]:.0f} km (band {lo_r:.0f}-{hi_r:.0f} km)",
-                         f"conservative = {worst_k}; " + "; ".join(f"{k} {v[0]:.0f} km" for k, v in cands.items()) + ". Calibrate with F2/F3."])
+                         f"conservative = {worst_k}; " + "; ".join(f"{k} {v[0]:.0f} km" for k, v in cands.items()) + ". Calibrate with F2/F3." + no_sitl])
         key_rows.append([f"endurance at {rb['V']:g} m/s (UNCALIBRATED)", f"CONSERVATIVE {cands[worst_k][1]:.0f} min (band {lo_e:.0f}-{hi_e:.0f} min)",
                          "same cases; avionics load included; no reserve deducted"])
         if en.get("mission_energy_sitl_env_Wh") is not None or pd0.get("missions"):

@@ -320,8 +320,8 @@ def run(ctx):
         fig, ax = plt.subplots(figsize=(6, 3.4))
         ax.plot([p["V"] for p in pw], [p["P_aero_W"] for p in pw], "o-", color=PALETTE[0], label="aerodynamic power D*V")
         ax.axvspan(Vs, Vs_p, color=PALETTE[7], alpha=0.12, lw=0, label=f"Vs nominal {Vs:.2f} - pessimistic {Vs_p:.2f} m/s")
-        ax.legend(loc="upper left", fontsize=8)
-        ax.axvline(vc, color=INK2, ls="--", lw=1); ax.text(vc, ax.get_ylim()[1] * 0.92, " cruise", color=INK2)
+        ax.legend(loc="lower right", fontsize=8)
+        ax.axvline(vc, color=INK2, ls="--", lw=1); ax.text(vc, ax.get_ylim()[1] * 0.55, " cruise", color=INK2)
         ax.set(xlabel="airspeed [m/s]", ylabel="power [W]", title="Aerodynamic power required (level, ISA SL)")
         save(fig, out / "power_required.png")
         ctx.add_file(out / "power_required.png", "Aerodynamic power required vs airspeed", "figure")
@@ -335,8 +335,9 @@ def run(ctx):
                 Cm_de=Cm_de, Cn_dr=Cn_dr, Cl_da=Cl_da, pb2V=pb2v, Vh=Vh, Vv=Vv, trim_cruise_deg=de_c,
                 modes={k: v for k, v in mo.items() if not k.startswith("A_")}, drag_breakdown=ds["drag_breakdown_cruise"],
                 assumption_corners=corners,
-                perf=ds["performance"]["by_speed"], power_required=pw, S=S, b=b, c=c, moment_ref=[g["ref"]["x_cg"], 0, g["zref"]],
-                timings=res["log"])
+                perf=ds["performance"]["by_speed"], power_required=pw, S=S, b=b, c=c, moment_ref=[g["ref"]["x_cg"], 0, g["zref"]])
+    # wall-clock timings are NOT part of data (they would change data_hash and needlessly invalidate downstream caches)
+    (out / "timings.json").write_text(json.dumps(res["log"], indent=1, default=str))
     summ = dict(V_stall_nominal=round(Vs, 2), V_stall_pessimistic=round(Vs_p, 2),
                 CLmax_trimmed_nom_pess=[round(lm["CLmax_trimmed_nominal"], 3), round(lm["CLmax_trimmed_pessimistic"], 3)],
                 CLmax_source=lm["clmax_source"].split(" (")[0], CLa_per_rad=round(d["CLa"], 3), CD0=round(data["CD0"], 4), LD_cruise=round(data["LD_cruise"], 1),

@@ -44,3 +44,4 @@ figure review, REVIEW_RESPONSE.txt. Scratch test dir /tmp/vbt (copy of out/), ne
 [R6] M4 (+m2, m11 source) committed: assumption corners: spiral worst 7.9 s (washout 0), SM 13.5-25 % over corners (sweep +-2), Vv 0.0174 at V-tail dihedral 30.
 [R7] M10 + minors committed. Dense 25 m waypoints: waypoint-rate weave 3.9 deg at 0.46 Hz (f_wp 0.53); 75 m: 6.2 deg at 0.15 Hz but XT RMS 3.0 vs 6.4 m. stork_aero changed (m8 incidence) -> CFD standard re-runs.
 [R8] 01:04 final standard base run started (nohup, log /tmp/run_std_base.log); quick test in /tmp/vbq
+[R9] 01:56 first final round done (base std 704 s warm / ~30 min cold incl. 17 min CFD, vtol std 311 s, quick 112 s). Figure review -> round 2 fixes (stall title, VTOL title, VTOL lift-on stall exclusion, power-required legend, aero timings out of data_hash); re-running all three with /tmp/final_runs.sh (copy in PROGRESS below).

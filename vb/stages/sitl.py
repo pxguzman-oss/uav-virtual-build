@@ -242,7 +242,7 @@ def run(ctx):
               note=f"model flown: {'PESSIMISTIC' if 'pess' in name else 'nominal'} CLmax (Vs {vs_flown:.2f} m/s); below the flown "
                    f"model's Vs = FAIL, below Vs pessimistic {Vs_pess:.2f} = WARN", drivers=["/airframe/lifting_surfaces/wing/cl_max"])
         if r.get("stall_time_s") is not None and not name.startswith(("stall", "launch_weak")):
-            G("unintended stall in flight: time above the stall alpha (h > 5 m) [s]", r["stall_time_s"], 0.5, "<=", "FAIL", "s",
+            G("unintended stall in wing-borne flight: time above the stall alpha (h > 5 m, lift motors off) [s]", r["stall_time_s"], 0.5, "<=", "FAIL", "s",
               note=f"alpha_stall {r.get('alpha_stall_model_deg')} deg of the model flown ({'PESSIMISTIC' if 'pess' in name else 'nominal'} "
                    "CLmax); a gust or TECS speed undershoot that stalls the aircraft = raise AIRSPEED_MIN/AIRSPEED_CRUISE or fly calmer air",
               drivers=["/airframe/lifting_surfaces/wing/cl_max", "/avionics/params/AIRSPEED_MIN"])

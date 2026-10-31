@@ -362,9 +362,9 @@ def analyze_stall(run, meta, tr, df, events, model):
             for a in ax:
                 a.axvline(out[k]["t_stall"], color=INK2, lw=0.8, ls=":")
             ax[0].set_title(f"Stall {k} (L/R CLmax asymmetry {'on' if meta.get('stall_asymmetry') else 'off'}): CLmax {out[k]['CL_max_seen']} "
-                            f"at {out[k]['V_cas_at_CLmax']} m/s; wing drop {out[k]['wing_drop_deg']} deg, "
-                            f"recovery {out[k]['recovery_s']} s after release; height lost after release {out[k]['alt_loss_release_to_recovery_m']} m "
-                            f"(break->recovery {out[k]['alt_loss_break_to_recovery_m']} m, stick held ~7 s)", loc="left", fontsize=8)
+                            f"at {out[k]['V_cas_at_CLmax']} m/s; wing drop {out[k]['wing_drop_deg']} deg\nrecovery {out[k]['recovery_s']} s after "
+                            f"release; height lost after release {out[k]['alt_loss_release_to_recovery_m']} m (break->recovery "
+                            f"{out[k]['alt_loss_break_to_recovery_m']} m, stick held ~7 s)", loc="left", fontsize=8.5)
             for a in ax:
                 a.axvline(meta["stalls"][k]["t1"], color=C[3], lw=0.8, ls="--")
             ax[3].text(meta["stalls"][k]["t1"], ax[3].get_ylim()[0], " stick released", color=C[3], fontsize=8, va="bottom")
@@ -484,7 +484,8 @@ def analyze_vtol(run, meta, tr, df, events):
     ax[2].plot(tr.t, tr.lift_rpm_mean, color=C[0], label="lift motors (mean)")
     ax[2].plot(tr.t, tr.rpm, color=C[1], label="pusher"); ax[2].set_ylabel("rpm"); ax[2].legend(loc="upper left", ncol=2)
     ax[3].plot(tr.t, tr.P_elec_W, color=C[0]); ax[3].set_ylabel("battery power [W]"); ax[3].set_xlabel("sim time [s]")
-    ax[0].set_title("QuadPlane VTOL mission (JSBSim bridge, 5 motors)", loc="left")
+    ax[0].set_title(f"{os.path.basename(run)}: QuadPlane VTOL mission (JSBSim bridge, 5 motors)\n{str(meta.get('env_label') or 'calm')[:110]}",
+                    loc="left", fontsize=9)
     save(fig, run, "vtol.png")
     return res
 
@@ -496,7 +497,10 @@ def envelope_metrics(tr, alpha_stall_deg=None):
     if len(fl):
         if alpha_stall_deg is not None:
             dts = float(np.median(np.diff(fl.t))) if len(fl) > 2 else 0.04
-            out["stall_time_s"] = round(float(((fl.alpha_deg > alpha_stall_deg) & (fl.V_tas > 3)).sum() * dts), 2)
+            # wing-borne flight only: with the lift motors turning (VTOL hover/transition) a high wing alpha is not a stall hazard
+            lc = [c for c in fl.columns if c.startswith("rpm_lift")]
+            wing = (fl[lc].mean(axis=1) <= 500) if lc else pd.Series(True, index=fl.index)
+            out["stall_time_s"] = round(float(((fl.alpha_deg > alpha_stall_deg) & (fl.V_tas > 3) & wing).sum() * dts), 2)
             out["alpha_stall_model_deg"] = alpha_stall_deg
         out["max_nz"] = round(float(fl.nz.max()), 2)
         out["min_nz"] = round(float(fl.nz.min()), 2)
