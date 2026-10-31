@@ -1,0 +1,80 @@
+VBUILD - RESPONSE TO THE INDEPENDENT REVIEW (REVIEW.txt), 2026-10-31
+=====================================================================
+
+Every critical and major finding is fixed in code and committed. The final re-runs used the final code with a
+clean tree (standard base, standard vtol, quick base). Each report now stamps the git hash and plan hash, and
+records the fidelity and cache key of every stage.
+
+ID   status  commit(s)          what changed
+---  ------  -----------------  ---------------------------------------------------------------------------------
+C1   fixed   8853a34, 175e910   One lift model / CLmax / Vs (vb/liftmodel.py) used by aero, structures, flight model,
+                                ArduPilot params and every gate. CLmax = Raymer 0.9 x 2-D Clmax (NeuralFoil) x cos(sweep);
+                                pessimistic = -10 %. The CL table is anchored to the CFD/VLM lift slope. The CFD gate now
+                                compares CFD with the lift line the flight model actually uses. Safety gates (hand launch,
+                                AIRSPEED_MIN, launch/mission min airspeed) use the PESSIMISTIC Vs.
+                                Result: Vs 9.25 / 9.75 m/s (was 8.39), and that reveals real FAILs (see below).
+C2   fixed   464bdb8            Standard fidelity flies the mission, launch and failsafe tests in the plan's mission
+                                environment (wind + gusts + turbulence) as well as a calm baseline. Every SITL result is
+                                labelled [calm] or [wind+gust+turb].
+M1   fixed   f60705d            Energy accounting matches between the steady model and SITL: hotel load on both sides,
+                                quadratic control drag, same density/altitude. Calm SITL/steady power ratio is 1.05
+                                (was 1.28).
+M2   fixed   8853a34            Covered by C1: there is now one Vs everywhere.
+M3   fixed   855e302, 175e910   The stall test is a wing-drop and recovery test with +-7.5 % asymmetric CLmax. It gates
+                                altitude loss, recovery time and time at alpha above the break. A new gate catches
+                                unintended stall in wing-borne flight (excluding VTOL lift-on phases). The spurious
+                                post-stall pitch-up in the tables is fixed.
+M4   fixed   5dff050            Assumptions are explicit {value, source, uncertainty} soft inputs (dihedral, V-tail
+                                geometry, washout, ...). Corner cases are evaluated, and passes within 5 % of a limit are
+                                listed as "marginal".
+M5   fixed   3700e11            Each stage result carries the git hash (with dirty flag), plan hash, fidelity and cache
+                                key. The report marks results INCOMPLETE if any were produced by different code, plan or
+                                fidelity.
+M6   fixed   3700e11, 5021cff   A stage that is skipped or not run is NOT RUN, so the verdict is INCOMPLETE. A stage
+                                without gates is INFO, not PASS. A missing SITL run or metric gives an ERROR gate. A quick
+                                run always says INCOMPLETE.
+M7   fixed   f60705d            VTOL mission energy includes hover takeoff, landing and transitions.
+M8   fixed   f60705d            Hover throttle is compared like with like: thrust-linearised Q_M_THST_HOVER versus PWM
+                                duty, reconciled. The T/W criterion carries a margin for stand-in prop data, and its
+                                source is labelled.
+M9   fixed   f60705d            Range, endurance and mission energy are reported as UNCALIBRATED bands. The headline is
+                                the conservative case (pessimistic drag, CD0 x 1.5).
+M10  fixed   68d93d2            Roll and pitch weave is detected and gated (amplitude and frequency against the
+                                waypoint rate). The report suggests waypoint spacing, NAVL1_PERIOD and AUTOTUNE.
+m1   fixed   f60705d            JSBSim Ixz sign corrected; checked against JSBSim's own inertia matrix.
+m2-m12 fixed 5dff050, 68d93d2,  Flight modes use the real drag; negative-gust gate and V-n plot added; checkMesh failure
+             175e910, f1dfc9f   is no longer recorded as PASS; prop map extrapolation flagged; gate labels, charts and
+                                cache keys (sitl_plumbing.parm) fixed; battery mass consistent; the thermal dT input is
+                                sourced; README corrected.
+(new)        de5eea7            Count-type checks (e.g. "0 errors <= 0") are never listed as marginal passes.
+
+HEADLINE RESULTS AFTER THE FIXES (standard fidelity, final code)
+
+Base (fixed-wing, 1.72 kg): NO-GO. 6 FAIL, 25 WARN, 0 ERROR.
+  Vs 9.25 m/s nominal, 9.75 m/s pessimistic.
+  Range at 13 m/s (uncalibrated): conservative 139 km, band 139-176 km.
+  Mission energy: 38-48 Wh, against 98 Wh usable.
+  FAILs:
+    - Pessimistic Vs is above hand-launch speed / 1.2 (11 m/s throw).
+    - AIRSPEED_MIN / pessimistic Vs is 1.13 (needs >= 1.2).
+    - In gusty wind, the launch dips below pessimistic Vs (min 8.8 m/s) and spends 1.1 s above the stall alpha.
+    - LW-PLA Tg vs hot-day skin temperature.
+
+VTOL (2.17 kg plan AUW): NO-GO. 4 FAIL, 22 WARN.
+  Vs 10.4 m/s nominal, 11.0 m/s pessimistic.
+  Range (uncalibrated): conservative 78 km, band 78-105 km.
+  FAILs:
+    - T/W 1.17 and hover duty 0.87 at the plan's 3.1 kg max-AUW case.
+    - AIRSPEED_MIN / pessimistic Vs.
+    - LW-PLA Tg.
+
+RUNTIMES (2 cores): quick base 99 s; standard base 705 s warm (~30 min cold incl. ~17 min CFD); standard vtol 268 s.
+Full fidelity was not re-run on the final code (estimate 1.5-3 h).
+
+OPEN ITEMS
+  - Full-fidelity run on the final code.
+  - Monte-Carlo / tornado sensitivity.
+  - Servo swept-volume and hatch-access checks.
+  - Conventional-tail aero.
+  - AUTOTUNE in SITL.
+  - Real Flightory STL import (the user has the pack; the mapping YAML is still to be written).
