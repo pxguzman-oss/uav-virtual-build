@@ -259,7 +259,7 @@ variants:
       # each pod = F90 motor 46.6 g + 7in prop 9 g + PETG motor mount 15 g
       - {name: lift_pod_FR, category: propulsion, part_number: "T-Motor F90 1300KV + 7in prop + mount", mass: {value: 0.0706, source: "46.6 g motor (T-Motor) + 9 g prop + 15 g mount (estimate)"}, position: [-0.20, 0.30, 0.026], dims: [0.028, 0.028, 0.022], shape: cylinder, axis: [0, 0, 1], mirror_y: true, external: true}
       - {name: lift_pod_RR, category: propulsion, part_number: "T-Motor F90 1300KV + 7in prop + mount", mass: {value: 0.0706, source: "46.6 g motor (T-Motor) + 9 g prop + 15 g mount (estimate)"}, position: [0.30, 0.30, 0.026], dims: [0.028, 0.028, 0.022], shape: cylinder, axis: [0, 0, 1], mirror_y: true, external: true}
-      - {name: lift_escs,   category: propulsion, mass: {value: 0.060, source: estimate}, position: [0.150, 0, -0.012], dims: [0.040, 0.040, 0.010], bay: electronics_bay}
+      - {name: lift_escs,   category: propulsion, mass: {value: 0.060, source: estimate}, position: [0.130, 0, 0.022], dims: [0.040, 0.040, 0.010], bay: electronics_bay}
       - {name: lift_wiring, category: wiring, mass: {value: 0.045, source: estimate}, position: [0.05, 0, 0.0], geom: false}
     propulsion_add:
       - name: lift
@@ -276,3 +276,4 @@ variants:
       aero: {prop_parking: crosswise_worst}
     avionics:
       autopilot: {frame_class: quadplane}
+      params: {AIRSPEED_MIN: 12}     # heavier VTOL airframe stalls ~1 m/s faster

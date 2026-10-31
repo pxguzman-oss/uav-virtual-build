@@ -26,7 +26,16 @@ def run(ctx):
     min_clear = gates_cfg.get("min_clearance_mm", 2.0)
     prop_clear = gates_cfg.get("prop_clearance_mm", 10.0)
     allow = list(gdata.get("external_parts", [])) + ["boom", "prop"]
-    fit_check.main([str(gdir), "--prop-clearance", str(prop_clear), "--allow-outside", *allow])
+    from .. import plan as P
+    motors = [c["name"] for c in P.expanded_components(ctx.plan) if c.get("category") == "propulsion" and c.get("shape") == "cylinder"]
+    fit_check.main([str(gdir), "--prop-clearance", str(prop_clear), "--allow-outside", *allow,
+                    "--prop-exclude", "motor", "lift_motor", *motors])
+    # parts mounted on each other by design: boom <-> the pods at its ends
+    mounted = set()
+    for b in ctx.plan["airframe"].get("booms", []):
+        for t in b.get("tip_mass_components", []):
+            for bn, tn in ((b["name"], t), (P.mirror_name(b["name"]), P.mirror_name(t))):
+                mounted.add(tuple(sorted((bn, tn))))
     shutil.move(str(gdir / "fit_report.json"), str(ctx.dir / "fit_report.json"))
     rep = json.loads((ctx.dir / "fit_report.json").read_text())
 
@@ -40,6 +49,7 @@ def run(ctx):
     bad = [p for p in rep["protrusions"] if not p["allowed"]]
     ctx.gate("internal parts protruding through the skin", len(bad), 0, "<=", "FAIL",
              note=", ".join(f"{p['part']} {100*p['outside_frac']:.0f}%" for p in bad[:6]))
+    rep["clashes"] = [c for c in rep["clashes"] if tuple(sorted((c["a"], c["b"]))) not in mounted or c["overlap_mm3"] > 50]
     ctx.gate("component-to-component interference (overlap > 1 mm3)", len(rep["clashes"]), 0, "<=", "FAIL",
              note=", ".join(f"{c['a']} x {c['b']} {c['overlap_mm3']:.0f} mm3" for c in rep["clashes"][:6]))
     for r in rep["prop_clearance"]:
@@ -58,7 +68,7 @@ def run(ctx):
             lb, hb = b.mesh.bounds
             if np.any(la - min_clear > hb) or np.any(lb - min_clear > ha):
                 continue
-            if tuple(sorted((a.name, b.name))) in clash_pairs:
+            if tuple(sorted((a.name, b.name))) in clash_pairs | mounted:
                 continue
             cm = trimesh.collision.CollisionManager()
             cm.add_object("a", a.mesh)

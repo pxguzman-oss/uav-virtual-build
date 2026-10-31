@@ -41,6 +41,8 @@ def main(argv=None):
     ap.add_argument("--prop-clearance", type=float, default=10.0, help="required prop clearance, mm")
     ap.add_argument("--allow-outside", nargs="*", default=["gps", "motor", "lift_motor", "vtol_boom", "servo_tail"],
                     help="name prefixes allowed to protrude (externally mounted)")
+    ap.add_argument("--prop-exclude", nargs="*", default=["motor", "lift_motor"],
+                    help="name prefixes ignored by the rotor clearance check (the motors the rotors sit on)")
     a = ap.parse_args(argv)
     t0 = time.perf_counter()
     man, parts = manifest.read(a.model_dir)
@@ -101,7 +103,7 @@ def main(argv=None):
         airframe = trimesh.collision.CollisionManager()
         airframe.add_object("oml", oml)
         for p in parts:
-            if p.role == "component" and p.mesh is not None and not p.name.startswith("motor") and not p.name.startswith("lift_motor"):
+            if p.role == "component" and p.mesh is not None and not any(p.name.startswith(x) for x in a.prop_exclude):
                 airframe.add_object(p.name, p.mesh)
         for p in props:
             d, nm = airframe.min_distance_single(p.mesh, return_name=True)

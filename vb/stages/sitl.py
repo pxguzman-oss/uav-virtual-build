@@ -191,6 +191,11 @@ def run(ctx):
             ctx.gate(f"{name}: VTOL takeoff, transitions both ways, VTOL land, disarm", ok, True, "bool", "FAIL")
             if r.get("landing_pos_error_m") is not None:
                 ctx.gate(f"{name}: landing position error [m]", r["landing_pos_error_m"], 2.0, "<=", "WARN", "m")
+            hp = (prop or {}).get("vtol", {}).get("hover_table") or []
+            mine = next((x for x in hp if x.get("is_plan_auw")), None)
+            if mine and r.get("hover_power_W"):
+                ctx.gate(f"{name}: SITL hover power / propulsion prediction", r["hover_power_W"] / mine["P_total_W"], [0.85, 1.15], "range",
+                         "WARN", note=f"{r['hover_power_W']:.0f} W vs {mine['P_total_W']:.0f} W")
             thr = r.get("ap_QTUN_ThO_median")
             if thr is not None:
                 ctx.gate(f"{name}: Q-mode hover throttle (QTUN.ThO)", thr, 0.70, "<=", "FAIL")
