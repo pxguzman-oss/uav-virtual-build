@@ -7,3 +7,9 @@ DAG pipeline at /home/claude/vbuild (run.py + vb/ package), one build plan YAML 
      'vbuild' package renamed 'geomkit'); unified venv /home/claude/venvs/vbuild being built from
      setup/requirements.txt (log /tmp/venv_install.log).
 NOTE: aero/cases/mesh_l67 simpleFoam (alpha 8) was running at start - never touch it.
+[M2] 23:00 standard base run complete (5.6 min with CFD cached; SITL 6 runs 4.7 min; CFD wing 3.6 min).
+     README.md + SKILL.md written (placeholders @@RUNTIMES@@ @@LIMITS@@ @@PROVENANCE@@ to fill).
+     Fixed: stall first-peak detection (analyze.py), report number formatting, balance colours.
+     Plan now uses CFD kind wingbody (standard) / wingbodytail (full). Testing wingbody CFD timing.
+     NEXT: verify install.sh in scratch (VB_SKIP_ARDUPILOT), cold timed runs: smoke.sh (quick base), standard base,
+     quick vtol; final figure review; fill README placeholders; final report.

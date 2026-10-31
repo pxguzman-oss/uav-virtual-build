@@ -89,6 +89,17 @@ def run(ctx):
                                     spanwise_resolution=10, chordwise_resolution=8).run()
         refs.append(dict(alpha=float(al), ab_CL=float(r["CL"][0]), ab_CD=float(r["CD"][0]), ab_Cm=float(r["Cm"][0]),
                          vlm_CL=float(np.ravel(v["CL"])[0]), vlm_Cm=float(np.ravel(v["Cm"])[0])))
+    # mesh quality (checkMesh): a handful of skew faces at junctions is tolerated
+    import re
+    try:
+        txt = (case / "log.checkMesh").read_text()
+        nfail = int((re.search(r"Failed (\d+) mesh checks", txt) or [0, 0])[1])
+        nskew = int((re.search(r"(\d+) highly skew faces", txt) or [0, 0])[1])
+        only_skew = nfail == 1 and nskew > 0
+        ctx.gate("checkMesh: failed checks (a few skew faces tolerated)", 0 if (nfail == 0 or (only_skew and nskew <= 50)) else nfail, 0,
+                 "<=", "WARN", note=f"{nfail} failed checks, {nskew} highly skew faces")
+    except FileNotFoundError:
+        pass
     # gates
     for p in points:
         if p["CL"] is None:
@@ -98,7 +109,7 @@ def run(ctx):
         ref_cm = float(np.interp(p["alpha"], [r["alpha"] for r in refs], [r["vlm_Cm"] for r in refs]))
         p.update(vlm_CL=ref_cl, vlm_Cm=ref_cm)
         ctx.gate(f"CFD alpha {p['alpha']}: converged (force oscillation < 0.5 %)", bool(p["converged"]), True, "bool", "WARN",
-                 note=f"{p['cells']} cells, mesh_ok={p['mesh_ok']}")
+                 note=f"{p['cells']} cells")
         if abs(ref_cl) > 0.05:
             ctx.gate(f"CFD alpha {p['alpha']}: abs(CL_cfd/CL_vlm - 1) (low-order lift check)", abs(p["CL"] / ref_cl - 1), 0.10, "<=", "WARN",
                      note=f"CFD {p['CL']:.3f} vs VLM {ref_cl:.3f} (fully turbulent RANS loses ~0.06 CL vs free transition)")

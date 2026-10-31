@@ -244,12 +244,79 @@ calibrations carry into the VTOL variant automatically, because the variant is a
 
 8. KNOWN LIMITATIONS
 --------------------
-@@LIMITS@@
+- Aero (AeroBuildup / AVL) and CFD geometry supports one main wing plus a V-tail plus a fuselage, and
+  optional VTOL booms and rotors. The geometry builder also handles htail/fin/canard surfaces, but
+  aero_lowfi raises NotImplementedError for them. A conventional tail needs a small extension of
+  `vb/lib/aero/stork_aero.py`: two extra surfaces in build_asb and write_avl.
+- Linear modes use the cruise derivatives only (no altitude or Mach effects).
+- Static margin uses the AVL neutral point. AeroBuildup's own Cm_alpha is too stable (no downwash) and
+  has been replaced.
+- CFD answers one named question: does the low-order model predict lift and Cm on the same shape?
+  Fully turbulent SST over-predicts the drag of laminar S3021-class sections by about 50 %, so CFD drag
+  is information only. CFD results are not fed into the flight model; the CL ratio is recorded in the
+  model provenance. Steady RANS cannot predict CLmax or stall.
+- Propulsion:
+  - Prop data are APC PER3, computed rather than measured. The plan's `ct_scale` 0.92 is a prior; C2
+    replaces it.
+  - The 7x5E table has a single rpm block.
+  - The motor thermal model is lumped, with R_th 1.5 K/W (estimate).
+  - The mission energy model is steady-state per segment, with out-leg headwind and back-leg tailwind.
+    SITL then rescales it with the measured Wh/km of the 6-DOF flight.
+- Structures: beam theory with Schrenk loading. Skin GJ comes from a closed printed shell, and the
+  panel width for wrinkling is an estimate (20 mm). There is no FEA of printed parts. CalculiX is only
+  used as a method cross-check (vb/lib/struct/calculix_check.py, Stork tubes) and does not run per plan.
+  Flutter is screened with frequency ratios, not a flutter solve.
+- Fit/clash:
+  - Components are boxes or cylinders from `dims`; real component CAD can be mapped through cad_import
+    with role: component.
+  - The battery insertion path is checked as fore-aft travel only. Connector access and the hatch are
+    not modelled.
+  - Servo and linkage swept volumes are NOT modelled.
+- SITL:
+  - The canal S-course from the prototype (1.9 km, bends R300 to R50) stands in for every mission. Plan
+    mission energy is extrapolated from its measured Wh/km.
+  - The SITL home is ArduPilot's CMAC field.
+  - Gains in data/ardupilot/plane_defaults.parm are sane defaults, not a tune. AUTOTUNE is not run in
+    SITL.
+  - QuadPlane runs use SIM_RATE_HZ 1200 and the same 4S pack for lift and cruise.
+  - The weak-throw case (15 m/s^2 for 0.4 s) is expected to fail with ArduPlane's takeoff logic. It is a
+    WARN that drives a training item, not a FAIL.
+- The soft-input ranking is gate-driver matching, not a Monte-Carlo or tornado sensitivity analysis.
+  The `uncertainty` fields are recorded but no corner cases are run yet (PIPELINE_DESIGN section 6:
+  N=50 LHS for cheap stages is a planned extension).
+- One SITL instance runs at a time; stages run sequentially. Sub-agents can shard with --only on separate
+  out dirs.
+- Renders use Blender Workbench, about 5 s per view. Cycles is available in vb/lib/geom/render.py
+  (--engine CYCLES) but is not wired to a fidelity level.
+- Python 3.11-3.13. Only Ubuntu 24.04 has been tested. OpenFOAM is the apt v1912 package, which needs
+  the LD_PRELOAD shim. Newer OpenFOAM repositories were blocked from the build machine.
 
 
 9. EXAMPLE PLAN PROVENANCE (how conflicts between the prototypes were resolved)
 ------------------------------------------------------------------------------
-@@PROVENANCE@@
+Sources: research/struct `stork_phase0.buildplan.yaml` (struct), research/geom `stork.yaml` (geom),
+research/aero (aero), research/sim `models/stork_p0.json` (sim).
+
+| item | struct | geom / aero / sim | chosen | why |
+|---|---|---|---|---|
+| wing planform | 1.62 m, 0.31 m2, 230/153 mm | same | same | manual |
+| wing dihedral | 2 deg (estimate) | 0 (straight 1000 mm centre spars) | 0 | physical argument from the spar layout |
+| washout, wing z, sweep | - | -1.5 deg, 22 mm, 0 | geom | only source (ASSUMED) |
+| V-tail | 0.265 panel, 150/100, x 0.46 | 0.300 panel, 150/95, x 0.44, sweep 20 | geom | aero dataset and renders were validated with it (ASSUMED) |
+| fuselage | 1.00 m box, x_nose -0.42 | 11 stations, x_nose -0.335, bays from the manual | geom | sourced bay size (manual 220 x 80 x 80) |
+| LW-PLA density | 750 kg/m3 (CNC Kitchen @230 C) | 0.55 g/cc nominal | 750 | sourced, matches the print temperature |
+| printed part masses | 380 / 2x140 / 2x30 g (estimate) | geometric 407 g at 0.55 g/cc | geometry shell model at 750 kg/m3: 180 / 2x154 / 2x33 g | derived from sourced density + geometry; still SOFT (weigh, C0) |
+| battery | 600 g (8 x 69-71 g + leads), 145 x 45 x 72 | 595 g, 90 x 46 x 73 in the battery bay | 600 g, 90 x 46 x 73 | sourced mass; dims fit 4S2P 21700 standing |
+| battery x | -77 mm | -210 mm | -210 mm (forward end of the bay) | puts the CG within +-3 % MAC of the manual's 47 mm |
+| motor | 77 g, Kv 910 | 76.5 g (getfpv) | 76.5 g | listing |
+| avionics / payload | fc, gps 20, airspeed, rx | fc, pi zero, camera, gps 8, telemetry, remote ID | union (geom list + airspeed sensor), gps 20 g conservative | union of the two parts lists |
+| aileron servo position | x 0.12 | 55 % chord | x 0.058 (25 % chord) | ES08MA laid flat protrudes at 55 % chord (clash stage FAIL in the first run) |
+| control surfaces | aileron 0.38-0.78, 25 % chord | aero added flaps (ASSUMED) | struct (no flaps) | struct values tied to servo checks; the manual lists no flaps |
+| motor Rm / I0 | 80 mOhm / 0.85 A (2810 data) | 85 mOhm / 0.8 A (placeholder) | struct | closer to a datasheet |
+| ct_scale | 0.92 | thrust_scale 0.9 | 0.92 | struct (prior) |
+| AUW | built up | 1.775 kg placeholder | built up: 1.72 kg (base), 2.17 kg (VTOL) | the component list is the source |
+| lift motor positions | +-0.30 m, x -0.20 / 0.30 | +-0.35 m (sim), x -0.195/0.275 (geom) | struct | planned boom geometry |
+| ArduPilot params | 4.4-era names (ARSPD_FBW_*, TRIM_ARSPD_CM) | 4.7 names | 4.7 names | SITL firmware Plane-4.7.2; ingest WARNs on legacy names |
 
 
 10. PITFALLS ALREADY HANDLED (do not re-learn them)
