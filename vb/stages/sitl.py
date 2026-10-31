@@ -204,7 +204,7 @@ def run(ctx):
     REQ = {"mission": ["xt_truth_rms_m", "course_Wh_per_km", "min_airspeed_inflight", "max_cas", "max_nz"],
            "launch": ["min_cas_after_release", "height_at_10s_m", "max_cas"], "stall": ["stalls", "V_stall_1g_mean"],
            "fs_rc": ["first_mode_change_after_trigger"], "fs_gcs": ["first_mode_change_after_trigger"], "fs_batt": ["trigger"],
-           "vtol": ["landing_pos_error_m", "hover_power_W", "ap_QTUN_ThO_median"], "smoke": ["mode_changes", "max_cas"],
+           "vtol": ["landing_pos_error_m", "hover_power_W", "ap_QTUN_ThO_median", "hover_throttle_lift", "vtol_phase_energy_Wh"], "smoke": ["mode_changes", "max_cas"],
            "cruise": ["table"]}
     for kind, name in planned:
         if name not in results:
@@ -294,37 +294,114 @@ def run(ctx):
                 G(f"landing position error [m]", r["landing_pos_error_m"], 2.0, "<=", "WARN", "m")
             hp = (prop or {}).get("vtol", {}).get("hover_table") or []
             mine = next((x for x in hp if x.get("is_plan_auw")), None)
-            if mine and r.get("hover_power_W") and "wind" not in name:
+            tmap = (prop or {}).get("vtol", {}).get("throttle_mapping") or {}
+            if mine and r.get("hover_power_W") and short == "calm":
                 G(f"SITL hover power / propulsion prediction", r["hover_power_W"] / mine["P_total_W"], [0.85, 1.15], "range",
-                         "WARN", note=f"{r['hover_power_W']:.0f} W vs {mine['P_total_W']:.0f} W")
+                  "WARN", note=f"{r['hover_power_W']:.0f} W vs {mine['P_total_W']:.0f} W (still air only)")
+            # hover throttle, like with like (review M8): ESC duty vs ESC duty at the same bus voltage, ThO vs ThO
+            d_sitl, v_sitl = r.get("hover_throttle_lift"), r.get("hover_V_bat")
+            if mine and d_sitl and v_sitl and mine.get("V_bus") and short == "calm":
+                d_pred = mine["duty"] * mine["V_bus"] / v_sitl
+                G("hover ESC duty SITL / propulsion model at the same bus voltage", d_sitl / d_pred, [0.9, 1.1], "range", "WARN",
+                  note=f"SITL {d_sitl:.3f} at {v_sitl:.1f} V vs model {mine['duty']:.3f} at {mine['V_bus']:.1f} V -> {d_pred:.3f}")
+                if tmap and r.get("ap_QTUN_ThO_median") is not None:
+                    a_ = min(max((d_pred - tmap["Q_M_SPIN_MIN"]) / (tmap["Q_M_SPIN_MAX"] - tmap["Q_M_SPIN_MIN"]), 0), 1)
+                    t_pred = tmap["Q_M_THST_EXPO"] * a_ * a_ + (1 - tmap["Q_M_THST_EXPO"]) * a_
+                    G("QTUN.ThO / model thrust-linearised hover throttle (same domain, same voltage)", r["ap_QTUN_ThO_median"] / t_pred,
+                      [0.85, 1.15], "range", "WARN", note=f"ThO {r['ap_QTUN_ThO_median']:.3f} vs model {t_pred:.3f}")
             thr = r.get("ap_QTUN_ThO_median")
             if thr is not None:
-                G(f"Q-mode hover throttle (QTUN.ThO)", thr, 0.70, "<=", "FAIL")
-    # energy: SITL-measured Wh/km calibrates the propulsion stage's mission energy
+                G(f"Q-mode hover throttle QTUN.ThO (thrust-linearised) <= 0.6", thr, 0.60, "<=", "WARN",
+                  note="ArduPilot docs 'Setting Hover Throttle': usually between 0.2 and 0.6")
+            if d_sitl is not None:
+                G("hover ESC duty of the lift motors <= 0.80", d_sitl, 0.80, "<=", "FAIL", note="TEAM CRITERION: >= 20 % duty headroom")
+            # VTOL phases energy vs the mission-model budget (review M7)
+            mrows = ((prop or {}).get("missions") or [{}])[0].get("segments", [])
+            budget = sum(x["energy_Wh"] for x in mrows if "VTOL" in str(x.get("kind")))
+            if budget and r.get("vtol_phase_energy_Wh") is not None:
+                G("SITL VTOL-phase energy (takeoff, transitions, landing) <= mission-model VTOL budget [Wh]", r["vtol_phase_energy_Wh"], budget,
+                  "<=", "WARN", "Wh", note=f"{r.get('vtol_phase_time_s')} s with lift motors on; model budget {budget:.1f} Wh incl. "
+                                          f"hover allowance")
+
+    # ---- energy (review M1/M9): compare like with like. Both sides include the avionics load, fly the same air
+    # (SITL home at the environment altitude/temperature) and the JSBSim control drag is quadratic. The SITL
+    # calibrates the PROPULSIVE power: r = (SITL course power - avionics) / steady propulsive power at the same
+    # mean airspeed (a power ratio, so the course geometry relative to the wind does not matter). Mission
+    # energy = steady propulsive energy x r + avionics energy (avionics never multiplied).
     energy = None
-    base = next((r for n, r in results.items() if n.startswith("mission_l1") and "course_Wh_per_km" in r), None)
-    if base and prop and prop.get("missions"):
-        pc = prop["cruise_unit"].get("power_curve", [])
-        V = base.get("course_mean_cas", plan["envelope"]["v_cruise"])
-        whkm_pred = float(np.interp(V, [p["V"] for p in pc], [p["Wh_per_km"] for p in pc])) if pc else None
-        ratio = base["course_Wh_per_km"] / whkm_pred if whkm_pred else None
-        mi = prop["missions"][0]
-        E_sitl = mi["energy_Wh"] * ratio if ratio else None
-        energy = dict(sitl_Wh_per_km=base["course_Wh_per_km"], predicted_Wh_per_km=whkm_pred, ratio=ratio, mission=mi["name"],
-                      mission_energy_steady_Wh=mi["energy_Wh"], mission_energy_sitl_scaled_Wh=E_sitl,
-                      available_Wh=mi["available_after_reserve_Wh"])
-        ctx.gate("SITL energy per km / steady-state propulsion prediction", ratio, [0.8, 1.3], "range", "WARN",
-                 note=f"{base['course_Wh_per_km']:.3f} vs {whkm_pred:.3f} Wh/km at {V:.1f} m/s (turns, TECS, ArduPilot loops)")
-        ctx.gate(f"mission '{mi['name']}' energy (SITL-calibrated) <= usable after reserve [Wh]", E_sitl, mi["available_after_reserve_Wh"],
-                 "<=", "FAIL", "Wh")
+    P_av = float(plan.get("avionics", {}).get("avionics_power_W", 4.0))
+    pc = (prop or {}).get("cruise_unit", {}).get("power_curve", []) if prop else []
+    mi = (prop or {}).get("missions", [None])[0] if prop and prop.get("missions") else None
+
+    def p_steady_prop(V):
+        return float(np.interp(V, [p["V"] for p in pc], [p.get("P_prop_W", p["P_W"] - P_av) for p in pc]))
+
+    def calib(r):
+        V = r.get("course_mean_cas")
+        if V is None or r.get("course_mean_power_W") is None or not pc:
+            return None
+        Pp_sitl = r["course_mean_power_W"] - P_av
+        Pp_pred = p_steady_prop(V)
+        return dict(V=V, P_sitl_W=r["course_mean_power_W"], P_pred_W=Pp_pred + P_av, P_sitl_prop_W=Pp_sitl,
+                    P_pred_prop_W=Pp_pred, ratio_prop=Pp_sitl / Pp_pred, Wh_per_km=r.get("course_Wh_per_km"),
+                    environment=r.get("environment"))
+    calm_name = next((n for n in results if n.startswith("mission_l1") and "course_mean_power_W" in results[n]), None)
+    own_env = (mi or {}).get("environment")
+    wind_name = f"mission_wind_{own_env}" if own_env and f"mission_wind_{own_env}" in results else None
+    if not is_vtol and ctx.fidelity != "quick":
+        if not (calm_name and mi and pc):
+            ctx.missing("SITL energy calibration (calm mission run + propulsion mission)", note="no calm mission run with course power")
+    if calm_name and mi and pc:
+        c_calm = calib(results[calm_name])
+        c_wind = calib(results[wind_name]) if wind_name else None
+        Ep, Eav = mi.get("energy_prop_Wh", mi["energy_Wh"]), mi.get("energy_avionics_Wh", 0.0)
+        E_calm = Ep * c_calm["ratio_prop"] + Eav
+        E_wind = Ep * c_wind["ratio_prop"] + Eav if c_wind else None
+        energy = dict(mission=mi["name"], environment=own_env, calm=c_calm, wind=c_wind, avionics_W=P_av,
+                      mission_energy_steady_Wh=mi["energy_Wh"], mission_energy_steady_pess_drag_Wh=mi.get("energy_pess_drag_Wh"),
+                      mission_energy_sitl_calm_Wh=E_calm, mission_energy_sitl_env_Wh=E_wind,
+                      available_Wh=mi["available_after_reserve_Wh"],
+                      # legacy keys (report / calibration table)
+                      sitl_Wh_per_km=c_calm["Wh_per_km"], predicted_Wh_per_km=(c_calm["P_pred_W"]) / (3.6 * c_calm["V"]),
+                      ratio=c_calm["P_sitl_W"] / c_calm["P_pred_W"])
+        ctx.gate("[calm] SITL / steady-state propulsive power at the same airspeed (model consistency)", c_calm["ratio_prop"], [0.8, 1.3],
+                 "range", "WARN",
+                 note=f"{c_calm['P_sitl_prop_W']:.1f} W vs {c_calm['P_pred_prop_W']:.1f} W at {c_calm['V']:.1f} m/s CAS (+{P_av:g} W avionics on both "
+                      f"sides); residual = turns, TECS/throttle activity, trim drag | env: {c_calm['environment']}")
+        if c_wind:
+            ctx.gate(f"[wind+gust+turb] SITL / steady propulsive power in the mission environment", c_wind["ratio_prop"], [0.8, 1.5], "range",
+                     "WARN", note=f"{c_wind['P_sitl_prop_W']:.1f} W vs {c_wind['P_pred_prop_W']:.1f} W at {c_wind['V']:.1f} m/s | env: {c_wind['environment']}")
+        Egate = E_wind if E_wind is not None else E_calm
+        ctx.gate(f"mission '{mi['name']}' energy, SITL-calibrated in its own environment ({'wind+gust+turb' if E_wind is not None else 'CALM - env run missing'}) "
+                 f"<= usable after reserve [Wh]", Egate, mi["available_after_reserve_Wh"], "<=", "FAIL", "Wh",
+                 note=f"steady {mi['energy_Wh']:.1f} Wh (pessimistic drag {mi.get('energy_pess_drag_Wh', float('nan')):.1f}), SITL calm "
+                      f"{E_calm:.1f}, SITL env {('%.1f' % E_wind) if E_wind is not None else '-'} Wh; UNCALIBRATED until F3",
+                 drivers=["/analysis/aero (drag)", "/analysis/aero/cd0_uncertainty", "/propulsion/units/cruise"])
         for n, r in results.items():
-            if n.startswith("mission_wind") and "course_Wh_per_km" in r:
-                Ew = mi["energy_Wh"] * r["course_Wh_per_km"] / whkm_pred
-                own = n == f"mission_wind_{mi.get('environment')}"
-                ctx.gate(f"{n}: mission energy with this wind/turbulence (SITL-scaled) [Wh]", Ew, mi["available_after_reserve_Wh"], "<=",
-                         "FAIL" if own else "WARN", "Wh",
-                         note=("mission's own environment" if own else "other environment case -> operating limit for this mission")
-                              + f"; {r['course_Wh_per_km']:.2f} Wh/km")
+            if n.startswith("mission_wind") and n != wind_name and "course_mean_power_W" in r:
+                cw = calib(r)
+                Ew = Ep * cw["ratio_prop"] + Eav
+                ctx.gate(f"{n} [wind+gust+turb]: mission energy if flown in this environment case (SITL-scaled) [Wh]", Ew,
+                         mi["available_after_reserve_Wh"], "<=", "WARN", "Wh",
+                         note=f"other environment case -> operating limit | env: {r.get('environment')}")
+        # figure: mission energy band
+        plt = style()
+        fig, ax = plt.subplots(figsize=(8, 2.9))
+        bars = [("steady model, nominal drag", mi["energy_Wh"]), ("steady model, pessimistic drag", mi.get("energy_pess_drag_Wh")),
+                ("SITL-calibrated, calm", E_calm), (f"SITL-calibrated, {own_env} wind+gust+turb", E_wind)]
+        bars = [(k, v) for k, v in bars if v is not None]
+        ax.barh(range(len(bars)), [v for _, v in bars], color=[PALETTE[0], PALETTE[3], PALETTE[1], PALETTE[2]][:len(bars)], height=0.55)
+        for i, (k, v) in enumerate(bars):
+            ax.text(v + 1, i, f"{v:.0f} Wh", va="center", color=INK2, fontsize=8.5)
+        ax.set_yticks(range(len(bars))); ax.set_yticklabels([k for k, _ in bars]); ax.invert_yaxis()
+        ax.axvline(mi["available_after_reserve_Wh"], color=PALETTE[7], ls="--", lw=1.4)
+        ax.text(mi["available_after_reserve_Wh"], len(bars) - 0.45, " usable after reserve", color=PALETTE[7], fontsize=8.5)
+        ax.set_xlim(0, max(max(v for _, v in bars), mi["available_after_reserve_Wh"]) * 1.25)
+        ax.set_xlabel("mission energy [Wh] (UNCALIBRATED until F3 cruise legs)")
+        ax.yaxis.grid(False)
+        ax.set_title(f"Mission '{mi['name']}' energy: band of estimates", loc="left")
+        save(fig, ctx.dir / "mission_energy_band.png")
+        ctx.add_file(ctx.dir / "mission_energy_band.png", "Mission energy: steady (nominal/pessimistic drag) vs SITL-calibrated (calm / mission env)", "figure")
     # L1 sweep summary
     l1 = None
     l1runs = [str(res_dir / n) for n in results if n.startswith("mission_l1") and "xt_truth_rms_m" in results[n]]
@@ -340,5 +417,7 @@ def run(ctx):
     data = dict(results=results, energy=energy, l1_sweep=l1, matrix=[n for _, n, _ in tests], walls=walls,
                 params_file="sitl_params.parm")
     summ = dict(runs=len(results), errors=sum(bool(r.get("run_error")) for r in results.values()),
-                wall_min=round(sum(v or 0 for v in walls.values()) / 60, 1), energy_ratio=energy and energy.get("ratio"))
+                wall_min=round(sum(v or 0 for v in walls.values()) / 60, 1),
+                propulsive_power_ratio_calm=energy and round(energy["calm"]["ratio_prop"], 3),
+                mission_energy_Wh_sitl_env=energy and energy.get("mission_energy_sitl_env_Wh") and round(energy["mission_energy_sitl_env_Wh"], 1))
     return dict(summary=summ, data=data)

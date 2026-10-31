@@ -49,10 +49,14 @@ def run(ctx):
         drag_src = "FALLBACK polar CD0 0.032, e 0.78 (aero stage missing)"
         ctx.note(drag_src)
 
-    def drag(V, rho=rho0, n=1.0):
+    P_av = float(plan.get("avionics", {}).get("avionics_power_W", 4.0))
+    an_aero = (plan.get("analysis") or {}).get("aero") or {}
+    cd0_u = P.val(an_aero.get("cd0_uncertainty"), 0.5)
+
+    def drag(V, rho=rho0, n=1.0, cd0_mult=1.0):
         q = 0.5 * rho * V * V
         CL = n * W / (q * S)
-        CD = CD0 + k * (CL - CLm) ** 2
+        CD = CD0 * cd0_mult + k * (CL - CLm) ** 2
         return q * S * CD, CL, CD
 
     cr_units = P.units(plan, "cruise")
@@ -78,9 +82,18 @@ def run(ctx):
     cru = PR.duty_for_thrust(unit, motor, prop, pack, T_req, Vc, rho0, soc=0.5)
     if cru is None:
         raise RuntimeError(f"cruise unit cannot produce {T_req:.2f} N at {Vc} m/s")
-    t_end, E_used = PR.endurance_cruise(unit, motor, prop, pack, T_req, Vc, rho0)
+    # endurance / range INCLUDING the avionics load (review M1), nominal and pessimistic drag (review M9)
+    t_end, E_used = PR.endurance_cruise(unit, motor, prop, pack, T_req, Vc, rho0, p_aux_W=P_av)
+    T_req_p = drag(Vc, cd0_mult=1 + cd0_u)[0] * inst
+    t_end_p, _ = PR.endurance_cruise(unit, motor, prop, pack, T_req_p, Vc, rho0, p_aux_W=P_av)
     res["cruise_unit"]["cruise"] = dict(cru, V=Vc, T_req_N=T_req, CL=CL, CD=CD, LD=CL / CD, endurance_min=t_end / 60,
-                                        range_km=t_end * Vc / 1000, endurance_with_reserve_min=t_end * (1 - pack.reserve) / 60)
+                                        range_km=t_end * Vc / 1000, endurance_with_reserve_min=t_end * (1 - pack.reserve) / 60,
+                                        P_total_W=cru["P_elec_per_motor"] + P_av, P_avionics_W=P_av)
+    res["cruise_unit"]["range_band"] = dict(
+        basis="UNCALIBRATED (no flight data): steady model at cruise speed, usable energy, avionics included",
+        V=Vc, cd0=CD0, cd0_uncertainty=cd0_u,
+        nominal=dict(endurance_min=t_end / 60, range_km=t_end * Vc / 1000),
+        pessimistic_drag=dict(endurance_min=t_end_p / 60, range_km=t_end_p * Vc / 1000, cd0=CD0 * (1 + cd0_u)))
     climb = PR.operating_point(unit, motor, prop, pack, 1.0, Vc, rho0, 0.5)
     roc = (climb["thrust_N"] / inst - D) * Vc / W
     res["cruise_unit"]["climb_rate_ms"] = roc
@@ -95,9 +108,12 @@ def run(ctx):
     Vs = aero["V_stall"] if aero else 9.0
     for V in np.arange(max(Vs * 1.1, 6), min((vmax or 25), 30) + 0.01, 0.5):
         op = PR.duty_for_thrust(unit, motor, prop, pack, drag(V)[0] * inst, V, rho0, soc=0.5)
+        opp = PR.duty_for_thrust(unit, motor, prop, pack, drag(V, cd0_mult=1 + cd0_u)[0] * inst, V, rho0, soc=0.5)
         if op:
-            pcurve.append(dict(V=float(V), P_W=op["P_elec_per_motor"], duty=op["duty"], I=op["I_bus_total"],
-                               Wh_per_km=op["P_elec_per_motor"] / (V * 3.6)))
+            # P_W / Wh_per_km INCLUDE the avionics load, like the SITL battery (review M1)
+            pcurve.append(dict(V=float(V), P_prop_W=op["P_elec_per_motor"], P_W=op["P_elec_per_motor"] + P_av, duty=op["duty"],
+                               I=op["I_bus_total"], Wh_per_km=(op["P_elec_per_motor"] + P_av) / (V * 3.6),
+                               P_W_pess_drag=(opp["P_elec_per_motor"] + P_av) if opp else None))
     res["cruise_unit"]["power_curve"] = pcurve
     # ---- thermal -----------------------------------------------------------------------------------
     m_g = unit["motor"].get("mass", 0.077) * 1000
@@ -140,6 +156,25 @@ def run(ctx):
         ctx.gate("max level speed vs VNE (overspeed possible in level flight?)", vmax, env["v_ne"], "<=", "WARN", "m/s",
                  note="if > VNE, cap THR_MAX / AIRSPEED_MAX")
 
+    # ---- VTOL phases for the mission model (review M7) ----------------------------------------------------
+    lifts0 = P.units(plan, "lift")
+    vprof = None
+    if lifts0:
+        l0 = lifts0[0]
+        lm0, lp0 = PR.Motor(l0["motor"]), PR.Prop(l0["prop"], ctx.plan_path.parent)
+        hov0 = PR.duty_for_thrust(l0, lm0, lp0, pack, M * G / l0["count"], 0.0, rho0, soc=0.5)
+        vt_cfg = (plan.get("analysis") or {}).get("vtol") or {}
+        vprof = dict(P_hover_W=(l0["count"] * hov0["P_elec_per_motor"]) if hov0 else float("nan"),
+                     takeoff_alt_m=float(P.val(vt_cfg.get("takeoff_alt"), 30.0)),
+                     climb_rate=float(P.val(vt_cfg.get("climb_rate"), 2.5)),        # ArduPilot Q_WP_SPEED_UP default 2.5 m/s
+                     descent_rate=float(P.val(vt_cfg.get("descent_rate"), 1.5)),    # Q_WP_SPEED_DN default 1.5 m/s
+                     land_final_alt=float(P.val(vt_cfg.get("land_final_alt"), 6.0)),  # Q_LAND_FINAL_ALT default 6 m
+                     land_speed=float(P.val(vt_cfg.get("land_speed"), 0.5)),          # Q_LAND_SPEED default 0.5 m/s
+                     transition_s=float(P.val(vt_cfg.get("transition_s"), 10.0)),     # team allowance per transition
+                     hover_allowance_s=float(P.val(vt_cfg.get("hover_allowance_s"), 30.0)),  # team allowance per landing
+                     source="ArduPilot QuadPlane defaults Q_WP_SPEED_UP/DN, Q_LAND_FINAL_ALT, Q_LAND_SPEED; transition and "
+                            "hover allowances = team values (analysis.vtol)")
+
     # ---- mission energy ------------------------------------------------------------------------------
     usable = pack.E_nom * pack.usable
     missions = []
@@ -169,23 +204,50 @@ def run(ctx):
                 rate = max((opc["thrust_N"] / inst - drag(V, rho_m)[0]) * V / W, 0.5)
                 t = h / rate
                 e = opc["P_elec_per_motor"] * t / 3600
+            elif kind == "launch" and vprof and plan["airframe"].get("launch", {}).get("method") == "vtol":
+                # VTOL takeoff: hover climb to takeoff_alt + forward transition (lift at hover power + pusher WOT)
+                t_c = vprof["takeoff_alt_m"] / vprof["climb_rate"]
+                t_tr = vprof["transition_s"]
+                t = t_c + t_tr
+                e = (1.10 * vprof["P_hover_W"] * t_c + (vprof["P_hover_W"] + wot["P_elec_per_motor"]) * t_tr) / 3600
+                kind = "launch (VTOL takeoff + transition)"
+            elif kind in ("land", "glide") and vprof and plan["airframe"].get("landing", {}).get("method") == "vtol":
+                # back-transition + hover allowance + descent at Q_WP_SPEED_DN to Q_LAND_FINAL_ALT, then Q_LAND_SPEED
+                t_tr, t_h = vprof["transition_s"], vprof["hover_allowance_s"]
+                t_d = (vprof["takeoff_alt_m"] - vprof["land_final_alt"]) / vprof["descent_rate"] + vprof["land_final_alt"] / vprof["land_speed"]
+                t = t_tr + t_h + t_d
+                e = (vprof["P_hover_W"] * (t_tr + t_h) + 0.95 * vprof["P_hover_W"] * t_d) / 3600
+                kind = "land (VTOL: back-transition, hover, descent)"
             elif kind == "launch":
                 t, e = 10.0, wot["P_elec_per_motor"] * 10 / 3600
             elif kind in ("land", "glide"):
                 t, e = 60.0, 0.3 * Pw * 60 / 3600
             else:
                 t, e = sgm.get("duration", 0), Pw * sgm.get("duration", 0) / 3600
-            e += plan.get("avionics", {}).get("avionics_power_W", 4.0) * t / 3600
-            rows.append(dict(kind=kind, time_s=t, energy_Wh=e, power_W=Pw if kind not in ("climb", "launch") else e * 3600 / max(t, 1e-9)))
-            E += e; t_tot += t
+            e_av = P_av * t / 3600
+            rows.append(dict(kind=kind, time_s=t, energy_prop_Wh=e, energy_avionics_Wh=e_av, energy_Wh=e + e_av,
+                             power_W=(e + e_av) * 3600 / max(t, 1e-9)))
+            E += e + e_av; t_tot += t
         reserve = mi.get("reserve_fraction", pack.reserve)
         avail = usable * (1 - reserve)
-        missions.append(dict(name=mi["name"], environment=envc["name"], wind_mps=wind, segments=rows, energy_Wh=E, time_min=t_tot / 60,
-                             distance_km=d_tot / 1000, usable_Wh=usable, available_after_reserve_Wh=avail, margin=avail / E - 1))
+        opn = PR.duty_for_thrust(unit, motor, prop, pack, drag(Vc, rho_m)[0] * inst, Vc, rho_m, soc=0.5)
+        opp = PR.duty_for_thrust(unit, motor, prop, pack, drag(Vc, rho_m, cd0_mult=1 + cd0_u)[0] * inst, Vc, rho_m, soc=0.5)
+        r_d = (opp["P_elec_per_motor"] / opn["P_elec_per_motor"]) if (opn and opp) else float("nan")
+        E_av_m = sum(r["energy_avionics_Wh"] for r in rows)
+        E_pess = (E - E_av_m) * r_d + E_av_m
+        E_av = sum(r["energy_avionics_Wh"] for r in rows)
+        missions.append(dict(name=mi["name"], environment=envc["name"], wind_mps=wind, segments=rows, energy_Wh=E,
+                             energy_prop_Wh=E - E_av, energy_avionics_Wh=E_av, rho=rho_m, time_min=t_tot / 60,
+                             distance_km=d_tot / 1000, usable_Wh=usable, available_after_reserve_Wh=avail, margin=avail / E - 1,
+                             energy_pess_drag_Wh=E_pess, pess_drag_power_ratio=r_d))
         ctx.gate(f"mission '{mi['name']}' energy vs usable after {reserve*100:.0f} % reserve [Wh]", E, avail, "<=", "FAIL", "Wh",
                  note=f"{E:.0f} Wh needed, {avail:.0f} Wh available ({envc['name']}, wind {wind} m/s)",
                  drivers=["/analysis/aero (drag)", "/propulsion/units/cruise", "/energy/usable_fraction"])
+        ctx.gate(f"mission '{mi['name']}' energy with PESSIMISTIC drag (CD0 x {1 + cd0_u:.2f}) vs usable after reserve [Wh]", E_pess, avail,
+                 "<=", "WARN", "Wh", note=f"uncalibrated drag band until F2/F3; propulsive power x {r_d:.2f}",
+                 drivers=["/analysis/aero/cd0_uncertainty", "/analysis/aero (drag)"])
     res["missions"] = missions
+    res["vtol_profile"] = vprof
     res["ardupilot_hints"] = {"TRIM_THROTTLE": round(cru["duty"] * 100), "BATT_CAPACITY": round(pack.cap * 1000),
                               "BATT_ARM_VOLT": round(pack.S * 3.5, 1), "BATT_LOW_VOLT": round(pack.S * 3.1, 1),
                               "BATT_CRT_VOLT": round(pack.S * 2.9, 1), "MOT_BAT_VOLT_MAX": round(pack.S * 4.2, 1),
@@ -208,6 +270,25 @@ def run(ctx):
         wot_l_full = PR.operating_point(lift, lm, lp, pack, 1.0, 0.0, rho0, 1.0)
         cases = sorted(set([round(M, 3)] + list(plan.get("analysis", {}).get("vtol_auw_cases_kg") or [])))
         rows = []
+        # ArduPilot hover throttle domain (review M8): Q_M_THST_HOVER and QTUN.ThO are THRUST-LINEARISED throttle t;
+        # the ESC sees duty d = spin_min + (spin_max - spin_min) * a with t = expo a^2 + (1 - expo) a (no battery
+        # voltage compensation unless Q_M_BAT_VOLT_MAX is set). Propulsion solves for d.
+        qp = {}
+        for f_ in ("plane_defaults.parm", "quadplane_defaults.parm"):
+            fp = Path(__file__).resolve().parents[2] / "data" / "ardupilot" / f_
+            if fp.exists():
+                for line in fp.read_text().splitlines():
+                    line = line.split("#")[0].split()
+                    if len(line) >= 2:
+                        qp[line[0]] = float(line[1])
+        qp.update({k: float(v) for k, v in ((plan.get("avionics") or {}).get("params") or {}).items() if k.startswith("Q_M_")})
+        expo, smin, smax = qp.get("Q_M_THST_EXPO", 0.65), qp.get("Q_M_SPIN_MIN", 0.15), qp.get("Q_M_SPIN_MAX", 0.95)
+
+        def tho_from_duty(d):
+            a = min(max((d - smin) / (smax - smin), 0.0), 1.0)
+            return expo * a * a + (1 - expo) * a
+        res["vtol"]["throttle_mapping"] = dict(Q_M_THST_EXPO=expo, Q_M_SPIN_MIN=smin, Q_M_SPIN_MAX=smax,
+                                               note="ThO = expo a^2 + (1-expo) a, a = (duty - spin_min)/(spin_max - spin_min)")
         for auw in cases:
             Th = auw * G / n
             hov = PR.duty_for_thrust(lift, lm, lp, pack, Th, 0.0, rho0, soc=0.5)
@@ -223,7 +304,8 @@ def run(ctx):
                              I_cell=hov["I_cell"], I_motor=hov["I_motor"], P_total_W=P_tot, g_per_W=hov["g_per_W"], TW_max=twr,
                              motor_loss_W=hov["motor_loss_W"], wot_I_motor=wot_l_full["I_motor"], wot_I_bat=wot_l_full["I_bus_total"],
                              wot_I_cell=wot_l_full["I_cell"], wot_thrust_g=wot_l["thrust_g"], wot_rpm=wot_l_full["rpm"],
-                             hover_minutes=t_hover, Q_M_THST_HOVER=round(hov["duty"], 2), cell_heat_W=q_cell,
+                             hover_minutes=t_hover, Q_M_THST_HOVER=round(tho_from_duty(hov["duty"]), 3), thr_lin=tho_from_duty(hov["duty"]),
+                             V_bus=hov["V_bus"], cell_heat_W=q_cell,
                              cell_dT_120s_hover_K=q_cell * 120 / (plan["energy"]["cell"]["mass"] * 1000 * 1.0)))
         res["vtol"]["hover_table"] = rows
         ok_rows = [r for r in rows if "rpm" in r]
@@ -232,10 +314,17 @@ def run(ctx):
         mine = next((r for r in rows if r.get("is_plan_auw")), rows[0])
         ldrv = ["/propulsion/units/lift/motor", "/propulsion/units/lift/prop/ct_scale", "/analysis/vtol_auw_cases_kg"]
         for r, tag in ((mine, "plan AUW"), (worst, "max AUW case")):
-            ctx.gate(f"VTOL T/W at {tag} {r['auw_kg']:.2f} kg", r["TW_max"], 1.6, ">=", "FAIL" if r["TW_max"] < 1.3 else "WARN",
-                     note="ArduPilot needs control headroom (>=1.6; <1.3 = no-go)", drivers=ldrv)
+            ctx.gate(f"VTOL T/W at {tag} {r['auw_kg']:.2f} kg >= 1.6 x 1.10 (stand-in prop data margin)", r["TW_max"], 1.76, ">=",
+                     "FAIL" if r["TW_max"] < 1.3 else "WARN",
+                     note="TEAM CRITERION: >= 1.6 for attitude-control headroom (common multirotor practice targets ~2), < 1.3 = no-go; "
+                          "+10 % margin required while the lift prop is the APC 7x5E stand-in (until the C2 thrust stand)", drivers=ldrv)
             if "duty" in r:
-                ctx.gate(f"VTOL hover duty at {tag} {r['auw_kg']:.2f} kg", r["duty"], 0.70, "<=", "FAIL", drivers=ldrv)
+                ctx.gate(f"VTOL hover throttle at {tag} {r['auw_kg']:.2f} kg, thrust-linearised (Q_M_THST_HOVER / QTUN.ThO domain)",
+                         r["thr_lin"], 0.60, "<=", "WARN",
+                         note=f"ESC duty {r['duty']:.3f} -> ThO {r['thr_lin']:.3f} (expo {expo}, spin {smin}-{smax}); "
+                              "ArduPilot docs 'Setting Hover Throttle': the value is usually between 0.2 and 0.6", drivers=ldrv)
+                ctx.gate(f"VTOL hover ESC duty at {tag} {r['auw_kg']:.2f} kg", r["duty"], 0.80, "<=", "FAIL",
+                         note="TEAM CRITERION: >= 20 % duty headroom for attitude control and gusts", drivers=ldrv)
         ctx.gate("lift ESC continuous / WOT lift motor current", lift["esc"]["i_cont"] / wot_l_full["I_motor"], 1.2, ">=", "FAIL",
                  note=f"{lift['esc']['i_cont']} A vs {wot_l_full['I_motor']:.1f} A")
         ctx.gate("per-cell current, all lift motors WOT / cell rating", wot_l_full["I_cell"] / pack.i_cell_max, 1.0, "<=", "FAIL",
@@ -294,16 +383,33 @@ def run(ctx):
         ctx.add_file(ctx.dir / "mission_energy.png", "Mission energy budget by segment vs usable energy", "figure")
     if lifts and res["vtol"].get("hover_table"):
         rows = [r for r in res["vtol"]["hover_table"] if "duty" in r]
-        fig, ax = plt.subplots(1, 2, figsize=(10, 3.4))
-        ax[0].plot([r["auw_kg"] for r in rows], [r["TW_max"] for r in rows], "o-", color=PALETTE[0])
-        ax[0].axhspan(0, 1.3, color=PALETTE[7], alpha=0.10); ax[0].axhspan(1.3, 1.6, color=PALETTE[3], alpha=0.12)
-        ax[0].set(xlabel="AUW [kg]", ylabel="T/W (all lift motors WOT)", title="VTOL thrust margin")
-        ax[1].plot([r["auw_kg"] for r in rows], [r["duty"] * 100 for r in rows], "o-", color=PALETTE[0], label="hover duty")
-        ax[1].axhline(70, color=PALETTE[7], ls=":"); ax[1].set(xlabel="AUW [kg]", ylabel="hover duty [%]", title="Hover throttle")
+        fig, ax = plt.subplots(1, 2, figsize=(11, 3.6))
+        from matplotlib.patches import Patch
+        A_ = [r["auw_kg"] for r in rows]
+        ax[0].axhspan(0, 1.3, color=PALETTE[7], alpha=0.10, lw=0); ax[0].axhspan(1.3, 1.76, color=PALETTE[3], alpha=0.14, lw=0)
+        ax[0].plot(A_, [r["TW_max"] for r in rows], "o-", color=PALETTE[0], label="T/W (all lift motors WOT)")
+        pa = next((r for r in rows if r.get("is_plan_auw")), None)
+        if pa:
+            ax[0].plot([pa["auw_kg"]], [pa["TW_max"]], "D", color=INK2, ms=8, label=f"plan AUW {pa['auw_kg']:.2f} kg")
+        ax[0].set_ylim(0.8, max(2.2, max(r["TW_max"] for r in rows) * 1.1))
+        h, l = ax[0].get_legend_handles_labels()
+        h += [Patch(color=PALETTE[7], alpha=0.25), Patch(color=PALETTE[3], alpha=0.3)]
+        l += ["FAIL < 1.3", "WARN 1.3-1.76 (1.6 + 10 %)"]
+        ax[0].legend(h, l, loc="upper right", fontsize=7.5)
+        ax[0].set(xlabel="AUW [kg]", ylabel="T/W", title="VTOL thrust margin (team criterion)")
+        ax[1].plot(A_, [r["duty"] for r in rows], "o-", color=PALETTE[0], label="ESC duty (FAIL > 0.80)")
+        ax[1].plot(A_, [r["thr_lin"] for r in rows], "s--", color=PALETTE[1], label="thrust-linearised ThO (WARN > 0.60)")
+        ax[1].axhline(0.80, color=PALETTE[7], ls=":"); ax[1].axhline(0.60, color=PALETTE[3], ls=":")
+        if pa:
+            ax[1].axvline(pa["auw_kg"], color=INK2, lw=0.8, ls=":"); ax[1].text(pa["auw_kg"], 0.05, " plan AUW", color=INK2, fontsize=8)
+        ax[1].set(xlabel="AUW [kg]", ylabel="hover throttle [-]", title="Hover throttle: ESC duty vs ArduPilot ThO domain", ylim=(0, 1.05))
+        ax[1].legend(loc="upper left", fontsize=7.5)
         save(fig, ctx.dir / "vtol_hover.png")
         ctx.add_file(ctx.dir / "vtol_hover.png", "VTOL T/W and hover duty vs AUW", "figure")
-    summ = dict(static_TW=round(tw, 2), cruise_duty=round(cru["duty"], 3), cruise_power_W=round(cru["P_elec_per_motor"], 1),
-                cruise_current_A=round(cru["I_bus_total"], 2), endurance_min=round(t_end / 60), range_km=round(t_end * Vc / 1000),
+    summ = dict(static_TW=round(tw, 2), cruise_duty=round(cru["duty"], 3), cruise_power_W_incl_avionics=round(cru["P_elec_per_motor"] + P_av, 1),
+                cruise_current_A=round(cru["I_bus_total"], 2),
+                endurance_min_UNCALIBRATED=f"{t_end_p / 60:.0f}-{t_end / 60:.0f} (pessimistic drag - nominal)",
+                range_km_UNCALIBRATED=f"{t_end_p * Vc / 1000:.0f}-{t_end * Vc / 1000:.0f} (pessimistic drag - nominal)",
                 v_max_level=vmax, climb_rate=round(roc, 2), drag_source=drag_src,
                 mission_energy_Wh=[round(m["energy_Wh"], 1) for m in missions])
     if lifts and res["vtol"].get("hover_table"):

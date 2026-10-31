@@ -475,6 +475,33 @@ def run(ctx):
         key_rows.append(["stall speed Vs (trimmed, 1 g, ISA SL)", f"nominal {lm0['V_stall_nominal']:.2f} m/s, PESSIMISTIC {lm0['V_stall_pessimistic']:.2f} m/s "
                          f"(CLmax {lm0['CLmax_trimmed_nominal']:.3f} / {lm0['CLmax_trimmed_pessimistic']:.3f}, -{100*lm0['uncertainty_rel']:.0f} %)",
                          f"CLmax source: {lm0['clmax_source']}; safety gates use the pessimistic value; F1 stall test retires it"])
+    pd0 = (R.get("propulsion") or {}).get("data") or {}
+    rb = (pd0.get("cruise_unit") or {}).get("range_band")
+    if rb:
+        cru = pd0["cruise_unit"]["cruise"]
+        Pp, Pav = cru["P_elec_per_motor"], cru.get("P_avionics_W", 0.0)
+        cands = {"steady model, nominal drag": (rb["nominal"]["range_km"], rb["nominal"]["endurance_min"]),
+                 f"steady model, pessimistic drag (CD0 x {1 + rb['cd0_uncertainty']:.2f})": (rb["pessimistic_drag"]["range_km"],
+                                                                                            rb["pessimistic_drag"]["endurance_min"])}
+        en = ((R.get("sitl") or {}).get("data") or {}).get("energy") or {}
+        for tag, c in (("SITL-calibrated, calm", en.get("calm")), ("SITL-calibrated, mission environment (still-air km)", en.get("wind"))):
+            if c:
+                f = (Pp + Pav) / (Pp * c["ratio_prop"] + Pav)
+                cands[tag] = (rb["nominal"]["range_km"] * f, rb["nominal"]["endurance_min"] * f)
+        worst_k = min(cands, key=lambda k: cands[k][0])
+        lo_r, hi_r = min(v[0] for v in cands.values()), max(v[0] for v in cands.values())
+        lo_e, hi_e = min(v[1] for v in cands.values()), max(v[1] for v in cands.values())
+        key_rows.append([f"range at {rb['V']:g} m/s on usable energy (UNCALIBRATED)", f"CONSERVATIVE {cands[worst_k][0]:.0f} km (band {lo_r:.0f}-{hi_r:.0f} km)",
+                         f"conservative = {worst_k}; " + "; ".join(f"{k} {v[0]:.0f} km" for k, v in cands.items()) + ". Calibrate with F2/F3."])
+        key_rows.append([f"endurance at {rb['V']:g} m/s (UNCALIBRATED)", f"CONSERVATIVE {cands[worst_k][1]:.0f} min (band {lo_e:.0f}-{hi_e:.0f} min)",
+                         "same cases; avionics load included; no reserve deducted"])
+        if en.get("mission_energy_sitl_env_Wh") is not None or pd0.get("missions"):
+            mi = pd0["missions"][0]
+            vals = [x for x in (mi["energy_Wh"], mi.get("energy_pess_drag_Wh"), en.get("mission_energy_sitl_calm_Wh"),
+                                en.get("mission_energy_sitl_env_Wh")) if x is not None]
+            key_rows.append([f"mission '{mi['name']}' energy (UNCALIBRATED)", f"CONSERVATIVE {max(vals):.0f} Wh (band {min(vals):.0f}-{max(vals):.0f} Wh) "
+                             f"vs {mi['available_after_reserve_Wh']:.0f} Wh usable after reserve",
+                             "steady nominal / pessimistic drag / SITL calm / SITL in the mission environment"])
     if key_rows:
         D.h(2, "Headline numbers (with uncertainty)", "headline")
         D.table(["quantity", "value", "basis"], key_rows)
@@ -596,9 +623,14 @@ def run(ctx):
             D.table(["run"] + keys, [[n] + [fmt(v.get(k)) for k in keys] for n, v in res.items()])
             e = r["data"].get("energy")
             if e:
-                D.p(f"Energy calibration: SITL {fmt(e['sitl_Wh_per_km'])} Wh/km vs steady-state {fmt(e['predicted_Wh_per_km'])} Wh/km "
-                    f"(ratio {fmt(e['ratio'])}); mission '{e['mission']}' -> {fmt(e['mission_energy_sitl_scaled_Wh'])} Wh vs "
-                    f"{fmt(e['available_Wh'])} Wh available after reserve.")
+                c = e["calm"]
+                D.p(f"Energy (like with like: avionics {fmt(e['avionics_W'])} W on both sides, same air, quadratic control drag): calm SITL "
+                    f"propulsive power {fmt(c['P_sitl_prop_W'])} W vs steady model {fmt(c['P_pred_prop_W'])} W at {fmt(c['V'])} m/s "
+                    f"(ratio {fmt(c['ratio_prop'])})" + (f"; in the mission environment ratio {fmt(e['wind']['ratio_prop'])}" if e.get("wind") else "")
+                    + f". Mission '{e['mission']}': steady {fmt(e['mission_energy_steady_Wh'])} Wh (pessimistic drag "
+                    f"{fmt(e.get('mission_energy_steady_pess_drag_Wh'))}), SITL-calibrated calm {fmt(e['mission_energy_sitl_calm_Wh'])} Wh, "
+                    f"in its environment {fmt(e.get('mission_energy_sitl_env_Wh'))} Wh vs {fmt(e['available_Wh'])} Wh available after reserve. "
+                    "All UNCALIBRATED until the F3 cruise legs.")
         if s == "flightmodel" and stage_ok("flightmodel"):
             d = r["data"]
             D.table(["derived parameter", "value", "why"], [[k, d["params"].get(k, v), d["derived_why"].get(k, "")] for k, v in d["derived"].items()])

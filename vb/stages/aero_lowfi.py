@@ -16,6 +16,64 @@ from ..flight_dyn import modes
 DEG = math.pi / 180
 
 
+def _flap_k2(airfoil, hinge_xc, Re):
+    """Section profile-drag increment per rad^2 of a plain flap: NeuralFoil on the DEFLECTED geometry,
+    mean of +-4/+-8 deg at alpha 0 (symmetric part), fitted dCd = k2 * delta^2."""
+    import aerosandbox as asb
+    af = asb.Airfoil(airfoil)
+
+    def cd(a):
+        return float(np.ravel(a.get_aero_from_neuralfoil(alpha=0.0, Re=Re, model_size="large")["CD"])[0])
+    c0 = cd(af)
+    ks = []
+    for d in (4.0, 8.0):
+        dcd = 0.5 * (cd(af.add_control_surface(deflection=d, hinge_point_x=hinge_xc)) +
+                     cd(af.add_control_surface(deflection=-d, hinge_point_x=hinge_xc))) - c0
+        ks.append(dcd / (d * DEG) ** 2)
+    return float(np.mean(ks))
+
+
+def control_drag(plan, ds, res, g):
+    """Control-surface drag (review M1): CD = CD_lin*delta (signed AVL CDff, induced) + CD_d2*delta^2 (profile,
+    NeuralFoil deflected section x strip area / S_ref). Replaces the old CD_abs*|delta| (+0.02/rad) term that
+    added ~0.0044 CD at the cruise ruddervator trim."""
+    S = g["ref"]["S"]
+    vc = float(plan["envelope"]["v_cruise"])
+    w = P.main_wing(plan)
+    vt = next(s for s in plan["airframe"]["lifting_surfaces"] if s.get("kind") in ("v_tail", "vtail"))
+    nu = 1.789e-5 / 1.225
+    out = {}
+    for srf in ds["surfaces"]:
+        kind = srf["kind"]
+        side = "R" if "right" in srf["name"] else "L"
+        avl_name = {"aileron": f"aileron_{side}", "flap": f"flap_{side}", "ruddervator": f"rv_{side}"}[kind]
+        cdff = res["avl_ctrl"].get(avl_name, {}).get("CDff", 0.0)
+        if kind in ("aileron", "flap"):
+            cs = g["controls"][kind]
+            y0, y1 = cs["y0"], cs["y1"]
+            s2 = w["span"] / 2
+            ch = lambda y: w["root_chord"] + (w["tip_chord"] - w["root_chord"]) * y / s2
+            strip = (ch(y0) + ch(y1)) / 2 * (y1 - y0)
+            k2 = _flap_k2(w["airfoil"].lower(), cs["hinge_xc"], vc * (ch(y0) + ch(y1)) / 2 / nu)
+        else:
+            cs = g["controls"]["ruddervator"]
+            sp = vt["span"]
+            ch = lambda f: vt["root_chord"] + (vt["tip_chord"] - vt["root_chord"]) * f
+            strip = (ch(cs["s0"]) + ch(cs["s1"])) / 2 * (cs["s1"] - cs["s0"]) * sp
+            k2 = _flap_k2(vt["airfoil"].lower(), cs["hinge_xc"], vc * (ch(cs["s0"]) + ch(cs["s1"])) / 2 / nu)
+        d = srf["derivatives_per_rad"]
+        d["CD_abs"] = 0.0
+        # first-order (AVL CDff) term NOT applied: in trimmed flight the tail-lift change is carried by the CL/CD(alpha)
+        # tables (alpha rises to compensate a download), and a signed linear term would make trim REDUCE drag
+        d["CD_lin"] = 0.0
+        d["CD_ff_avl_info"] = float(cdff)
+        d["CD_d2"] = float(k2 * strip / S)
+        out[srf["name"]] = dict(CD_d2=d["CD_d2"], k2_section=k2, strip_area_m2=strip, CD_ff_avl=float(cdff))
+    ds["control_drag"] = dict(method="CD_d2 * delta^2 (NeuralFoil deflected section x strip area / S_ref); AVL CDff recorded, not applied",
+                              surfaces=out)
+    return out
+
+
 def run(ctx):
     plan = ctx.plan
     mass = ctx.data("mass")
@@ -36,6 +94,7 @@ def run(ctx):
     args = types.SimpleNamespace(v_cruise=vc, speeds=speeds)
     ds, sim = sa.make_dataset(g, mass["mass_kg"], res, args)
     ds["provenance"]["geometry"] = f"build plan {ctx.plan_path.name} ({ctx.variant})"
+    control_drag(plan, ds, res, g)
     json.dump(ds, open(out / "aero_dataset.json", "w"), indent=1)
     json.dump(sim, open(out / "sim_aero_block.json", "w"), indent=1)
     try:

@@ -122,7 +122,8 @@ def run(ctx):
             put("TKOFF_THR_MAX", hints["TKOFF_THR_MAX"], "propulsion: duty giving static T/W 0.65 (limits climb overspeed)")
         put("TKOFF_THR_MINSPD", 3, "weak throws: GPS speed lags (SITL lesson); keep TKOFF_THR_DELAY for prop safety")
     if is_vtol:
-        put("Q_M_THST_HOVER", hints.get("Q_M_THST_HOVER", 0.45), "propulsion hover duty at plan AUW")
+        put("Q_M_THST_HOVER", hints.get("Q_M_THST_HOVER", 0.45), "propulsion hover at plan AUW, converted from ESC duty to the "
+            "thrust-linearised throttle domain (Q_M_THST_EXPO, Q_M_SPIN_MIN/MAX)")
         put("Q_M_BAT_CURR_MAX", hints.get("Q_M_BAT_CURR_MAX", 0), "0.8 x pack continuous current")
         put("Q_ASSIST_SPEED", der["AIRSPEED_MIN"], "VTOL assist below AIRSPEED_MIN")
         put("INS_HNTCH_ENABLE", 1, "lift rotor 1P notch")

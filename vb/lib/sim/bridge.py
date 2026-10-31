@@ -263,6 +263,8 @@ class Bridge:
         fdm["ic/u-fps"] = 0; fdm["ic/v-fps"] = 0; fdm["ic/w-fps"] = 0
         fdm["ic/p-rad_sec"] = 0; fdm["ic/q-rad_sec"] = 0; fdm["ic/r-rad_sec"] = 0
         fdm.run_ic()
+        if getattr(self.a, "stall_asym", False):
+            fdm["fcs/stall-asym-on"] = 1.0
         self.fdm = fdm
         self.dt = dt
         self.lat0, self.lon0 = math.radians(lat), math.radians(lon)
@@ -433,7 +435,7 @@ class Bridge:
     def open_log(self, path):
         self.log = open(path, "w")
         self.cols = self.COLS[:-1] + ["defl_" + s["name"] for s in self.surfaces] + \
-            [f"rpm_{m.name}" for m in self.motors[1:]] + ["mark"]
+            [f"rpm_{m.name}" for m in self.motors[1:]] + [f"thr_{m.name}" for m in self.motors[1:]] + ["mark"]
         self.log.write(",".join(self.cols) + "\n")
 
     def write_log(self):
@@ -458,6 +460,7 @@ class Bridge:
                self.bat.V, self.bat.I, self.bat.V * self.bat.I, self.bat.soc, self.bat.Wh, self.bat.Ah]
         row += [math.degrees(f[f"fcs/{x['name']}-pos-rad"]) for x in self.surfaces]
         row += [mo.rpm for mo in self.motors[1:]]
+        row += [mo.thr for mo in self.motors[1:]]
         out = []
         for v in row:
             out.append(v if isinstance(v, str) else f"{v:.8g}")
@@ -563,6 +566,8 @@ def main():
     ap.add_argument("--turb", default=None, help="severity(1-7),w20_mps")
     ap.add_argument("--gusts", default=None, help="amp_mps,period_s,duration_s: periodic 1-cos horizontal gusts once airborne")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--stall-asym", dest="stall_asym", action="store_true",
+                    help="switch on the left/right CLmax asymmetry table (wing-drop stall test)")
     ap.add_argument("--temp-c", dest="temp_c", type=float, default=None, help="air temperature at home [C] (ISA + delta-T)")
     ap.add_argument("--log", default=None)
     ap.add_argument("--log-hz", type=float, default=25)

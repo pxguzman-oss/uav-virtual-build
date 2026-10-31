@@ -148,6 +148,32 @@ def func(name, desc, factors, tbl=None, const=None):
             f'        <product>{inner}</product>\n      </function>\n')
 
 
+def stall_tables(m, tables):
+    """Post-stall lateral model (review M3), from the CL(alpha) table actually flown:
+    * roll-damping factor f(alpha) = clip(dCL/dalpha / CLa, -0.5, 1): strip theory, a stalled wing (negative
+      lift slope) no longer damps roll and can autorotate -> wing drop / spin entry become possible;
+    * aileron effectiveness factor clip(f, 0.25, 1);
+    * left/right CLmax asymmetry +-x (aero.stall_asymmetry, default 0.075): Cl_asym = 0.5 (CL_L - CL_R) y_cp/b,
+      y_cp/b = 4/(3 pi)/2 (elliptic half-span centroid); switched on by fcs/stall-asym-on (bridge --stall-asym)."""
+    sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..", "..")))
+    from vb import liftmodel as LM
+    a_deg, CL = np.array(tables[0], float), np.array(tables[1], float)
+    d = m["aero"].get("derivatives", {})
+    CLa = d.get("CLa", 5.0)
+    sel = (a_deg >= -30) & (a_deg <= 30)
+    a, c = a_deg[sel], CL[sel]
+    dcl = np.gradient(c, np.radians(a))
+    f = np.clip(dcl / CLa, -0.5, 1.0)
+    f_ail = np.clip(f, 0.25, 1.0)
+    x = float(m["aero"].get("stall_asymmetry", 0.075))
+    clmax = float(d.get("CLmax", c.max()))
+    cl_l = LM.cap_table(a, c, clmax * (1 - x))
+    cl_r = LM.cap_table(a, c, clmax * (1 + x))
+    ycp_b = 4 / (3 * math.pi) / 2
+    cl_asym = np.where(a > 0, 0.5 * (cl_l - cl_r) * ycp_b, 0.0)
+    return dict(alpha_deg=a.tolist(), clp_factor=f.tolist(), ail_factor=f_ail.tolist(), Cl_asym=cl_asym.tolist(), asym=x)
+
+
 def jsbsim_xml(m, tables):
     geo, mass, aero = m["geometry"], m["mass"], m["aero"]
     d = aero.get("derivatives", {})
@@ -173,7 +199,10 @@ def jsbsim_xml(m, tables):
     w('  </metrics>')
     w('  <mass_balance>')
     w(f'    <ixx unit="KG*M2"> {I["Ixx"]} </ixx><iyy unit="KG*M2"> {I["Iyy"]} </iyy><izz unit="KG*M2"> {I["Izz"]} </izz>')
-    w(f'    <ixz unit="KG*M2"> {I.get("Ixz", 0)} </ixz><ixy unit="KG*M2"> {I.get("Ixy", 0)} </ixy><iyz unit="KG*M2"> {I.get("Iyz", 0)} </iyz>')
+    # model JSON: Ixz = +int(x z dm) in body FRD. The physical tensor needs J13 = -int(x z dm); JSBSim 1.3.3 (default
+    # negated_crossproduct_inertia) puts the XML value straight into J13 (verified with FGMassBalance.GetJ()), so
+    # the XML gets -Ixz (review m1). Ixy/Iyz are zero for a symmetric airframe.
+    w(f'    <ixz unit="KG*M2"> {-I.get("Ixz", 0)} </ixz><ixy unit="KG*M2"> {-I.get("Ixy", 0)} </ixy><iyz unit="KG*M2"> {-I.get("Iyz", 0)} </iyz>')
     w(f'    <emptywt unit="KG"> {mass["mass_kg"]} </emptywt>')
     w('    ' + loc("CG", mass["cg_m"]))
     w('  </mass_balance>')
@@ -211,6 +240,7 @@ def jsbsim_xml(m, tables):
     w('  </external_reactions>')
     # flight controls: one actuator per physical surface, command set in rad by the bridge
     w('  <flight_control name="FCS">')
+    w('    <property value="0">fcs/stall-asym-on</property>')
     for s in m["surfaces"]:
         w(f'    <property value="0">fcs/{s["name"]}-cmd-rad</property>')
     for s in m["surfaces"]:
@@ -254,11 +284,18 @@ def jsbsim_xml(m, tables):
     w(func("aero/coefficient/CD_alpha", "Drag vs alpha (table, incl. induced)", qS, tbl=tCD))
     w(func("aero/coefficient/CD_beta", "Drag due to sideslip", qS + ["aero/beta-rad", "aero/beta-rad"], const=d.get("CD_beta2", 0.3)))
     for s in m["surfaces"]:
-        v = s["derivatives_per_rad"].get("CD_abs", 0)
-        if v:
+        dd = s["derivatives_per_rad"]
+        v = dd.get("CD_abs", 0)
+        if v:   # legacy linear |delta| term (kept for old model files)
             w(f'      <function name="aero/coefficient/CD_{s["name"]}"><description>drag due to |{s["name"]}|</description>'
               f'<product><property>aero/qbar-psf</property><property>metrics/Sw-sqft</property>'
               f'<abs><property>fcs/{s["name"]}-pos-rad</property></abs><value>{v}</value></product></function>')
+        if dd.get("CD_lin"):
+            w(func(f'aero/coefficient/CD_lin_{s["name"]}', f'first-order (induced) drag due to {s["name"]}',
+                   qS + [f'fcs/{s["name"]}-pos-rad'], const=dd["CD_lin"]))
+        if dd.get("CD_d2"):
+            w(func(f'aero/coefficient/CD_d2_{s["name"]}', f'profile drag ~ delta^2 of {s["name"]} (review M1)',
+                   qS + [f'fcs/{s["name"]}-pos-rad', f'fcs/{s["name"]}-pos-rad'], const=dd["CD_d2"]))
     w('    </axis>')
     # SIDE
     w('    <axis name="SIDE">')
@@ -273,14 +310,23 @@ def jsbsim_xml(m, tables):
             w(func(f'aero/coefficient/CY_{s["name"]}', f'Side force due to {s["name"]}', qS + [f'fcs/{s["name"]}-pos-rad'], const=v))
     w('    </axis>')
     # ROLL
+    st = stall_tables(m, tables)
+    ar = [math.radians(x) for x in st["alpha_deg"]]
     w('    <axis name="ROLL">')
     w(func("aero/coefficient/Cl_beta", "Roll due to beta (dihedral effect)", qSb + ["aero/beta-clipped-rad"], const=d.get("Clb", -0.05)))
-    w(func("aero/coefficient/Cl_p", "Roll damping", qSb + ["aero/bi2vel", "velocities/p-aero-rad_sec"], const=d.get("Clp", -0.45)))
+    w(func("aero/coefficient/Cl_p", "Roll damping x strip-theory stall factor (dCL/dalpha / CLa)",
+           qSb + ["aero/bi2vel", "velocities/p-aero-rad_sec"], tbl=table1d("aero/alpha-rad", ar, st["clp_factor"]), const=d.get("Clp", -0.45)))
     w(func("aero/coefficient/Cl_r", "Roll due to yaw rate", qSb + ["aero/bi2vel", "velocities/r-aero-rad_sec"], const=d.get("Clr", 0.1)))
+    w(func("aero/coefficient/Cl_stall_asym", f"left/right CLmax asymmetry +-{st['asym']:.3f} (stall test only)",
+           qSb + ["fcs/stall-asym-on"], tbl=table1d("aero/alpha-rad", ar, st["Cl_asym"])))
     for s in m["surfaces"]:
         v = s["derivatives_per_rad"].get("Cl", 0)
         if v:
-            w(func(f'aero/coefficient/Cl_{s["name"]}', f'Roll due to {s["name"]}', qSb + [f'fcs/{s["name"]}-pos-rad'], const=v))
+            if s.get("kind") in ("aileron", "flaperon", "elevon"):
+                w(func(f'aero/coefficient/Cl_{s["name"]}', f'Roll due to {s["name"]} x stall effectiveness factor',
+                       qSb + [f'fcs/{s["name"]}-pos-rad'], tbl=table1d("aero/alpha-rad", ar, st["ail_factor"]), const=v))
+            else:
+                w(func(f'aero/coefficient/Cl_{s["name"]}', f'Roll due to {s["name"]}', qSb + [f'fcs/{s["name"]}-pos-rad'], const=v))
     w('    </axis>')
     # PITCH
     w('    <axis name="PITCH">')

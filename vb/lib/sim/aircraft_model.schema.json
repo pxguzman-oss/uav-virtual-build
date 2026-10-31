@@ -43,7 +43,10 @@
           "type": "object",
           "description": "Increment in total-aircraft coefficients per radian of THIS surface's deflection (positive TE down). Provide all six; zeros allowed.",
           "properties": {
-            "CL": {"type": "number"}, "CD_abs": {"type": "number", "description": "Drag increment per |rad| (always positive)."},
+            "CL": {"type": "number"}, "CD_abs": {"type": "number", "description": "LEGACY drag increment per |rad| (always positive)."},
+            "CD_lin": {"type": "number", "description": "signed first-order drag derivative per rad (AVL CDff: induced-drag change)"},
+            "CD_d2": {"type": "number", "description": "profile-drag increment per rad^2 (CD += CD_d2 * delta^2, NeuralFoil deflected section)"},
+            "CD_ff_avl_info": {"type": "number", "description": "AVL CDff derivative (information only)"},
             "CY": {"type": "number"}, "Cl": {"type": "number"}, "Cm": {"type": "number"}, "Cn": {"type": "number"}
           }
         }

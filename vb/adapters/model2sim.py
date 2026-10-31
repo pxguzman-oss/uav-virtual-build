@@ -56,7 +56,7 @@ def build(plan, mass, aero_ds, sim_block, prop_res, plan_dir, launch_cfg=None):
                       "length_m": x_tail - x_nose},
          "mass": {"mass_kg": mass["mass_kg"], "cg_m": list(mass["cg_m"]),
                   "inertia_kgm2": {"Ixx": I["Ixx"], "Iyy": I["Iyy"], "Izz": I["Izz"], "Ixz": I["Ixz"]}},
-         "aero": dict(sim_block["aero"]),
+         "aero": dict(sim_block["aero"], stall_asymmetry=float(P.val(((plan.get("analysis") or {}).get("sitl") or {}).get("stall_asymmetry"), 0.075))),
          "surfaces": [], "propulsion": {"motors": []}}
     # surfaces
     cs_by_fn = {}

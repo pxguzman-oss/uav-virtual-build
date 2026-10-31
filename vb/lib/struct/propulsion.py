@@ -193,16 +193,18 @@ def cruise_drag(plan, mass, V, rho, aero=None):
     return q * S * CD, CL, CD, CL / CD, src
 
 
-def endurance_cruise(unit, motor, prop, pack, T_req, V, rho, dt=10.0):
+def endurance_cruise(unit, motor, prop, pack, T_req, V, rho, dt=10.0, p_aux_W=0.0):
+    """Time until the usable charge is used at constant thrust; p_aux_W = avionics/hotel load on the same pack."""
     soc, t, E_used = 1.0, 0.0, 0.0
     soc_min = 1.0 - pack.usable
     while soc > soc_min:
-        op = duty_for_thrust(unit, motor, prop, pack, T_req, V, rho, soc=soc)
+        i_aux = p_aux_W / max(pack.ocv(soc), 1.0)
+        op = duty_for_thrust(unit, motor, prop, pack, T_req, V, rho, soc=soc, other_bus_A=i_aux)
         if op is None or op["V_cell"] < 3.0:
             break
         dq = op["I_bus_total"] * dt / 3600.0
         soc -= dq / pack.cap
-        E_used += op["V_bus"] * op["I_bus_total"] * dt / 3600.0
+        E_used += (op["V_bus"] * (op["I_bus_total"] - i_aux) + p_aux_W) * dt / 3600.0
         t += dt
     return t, E_used
 

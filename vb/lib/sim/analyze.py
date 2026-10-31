@@ -385,13 +385,21 @@ def analyze_vtol(run, meta, tr, df, events):
     tr = tr.copy()
     tr["lift_rpm_mean"] = tr[lift_cols].mean(axis=1) if lift_cols else 0
     hov = tr[(tr.lift_rpm_mean > 3000) & (tr.V_tas < 3) & (tr.h_agl > 5)]
+    # VTOL phases (lift motors turning): energy and time = what the mission model must budget (review M7)
+    vt = tr[tr.lift_rpm_mean > 500]
+    if len(vt) > 2:
+        dt = np.diff(tr.t.values, prepend=tr.t.values[0])
+        m_ = (tr.lift_rpm_mean > 500).values
+        res["vtol_phase_time_s"] = round(float(dt[m_].sum()), 1)
+        res["vtol_phase_energy_Wh"] = round(float((tr.P_elec_W.values * dt)[m_].sum() / 3600), 2)
     if len(hov):
         res["hover_power_W"] = round(float(hov.P_elec_W.median()), 1)
         res["hover_current_A"] = round(float(hov.I_bat.median()), 1)
         res["hover_lift_rpm"] = round(float(hov.lift_rpm_mean.median()), 0)
         res["hover_endurance_min_on_usable"] = round(USABLE_WH / res["hover_power_W"] * 60, 1)
         res["hover_throttle_lift"] = round(float(hov[[c for c in tr.columns if c.startswith("thr_lift")]].mean(axis=1).median()), 3) \
-            if any(c.startswith("thr_lift") for c in tr.columns) else None
+            if any(c.startswith("thr_lift") for c in tr.columns) else None      # = ESC duty (PWM fraction), like propulsion
+        res["hover_V_bat"] = round(float(hov.V_bat.median()), 2)
         if df and "QTUN" in df and len(df["QTUN"]):
             q = df["QTUN"]
             res["ap_QTUN_ThO_median"] = round(float(q.ThO.median()), 3)

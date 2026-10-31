@@ -239,7 +239,8 @@ analysis:
   cg_tolerance_mac: 0.03
   mass_model: geometry
   static_margin_range: [0.05, 0.20]
-  aero: {speeds: [10, 14, 20], excrescence_factor: 1.10, prop_parking: aligned}
+  aero: {speeds: [10, 14, 20], excrescence_factor: 1.10, prop_parking: aligned,
+         cd0_uncertainty: {value: 0.5, uncertainty: 0.5, source: "assumption (team): pessimistic drag band CD0 x 1.5 for a printed airframe (seams, hinge gaps, antennas, pusher prop in the fuselage/V-tail wake) until the F2/F3 flights"}}
   cfd: {kind: wingbody, kind_full: wingbodytail, alphas_standard: [2, 7], alphas_full: [0, 4, 8],
         surf_level: [5, 6], surf_level_full: [6, 7], iters: 400}
   sitl: {survey_alt: 60, l1_periods_standard: [10, 15], l1_periods_full: [10, 13, 15, 18, 22],
