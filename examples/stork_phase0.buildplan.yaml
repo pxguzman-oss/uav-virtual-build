@@ -147,7 +147,7 @@ components:
   # --- avionics & payload -------------------------------------------------------------------------
   - {name: flight_controller, category: avionics, part_number: "Matek H743-WING (assumed)", mass: 0.030, position: [0.020, 0, -0.017], dims: [0.045, 0.040, 0.015], bay: electronics_bay}
   - {name: gps,          category: avionics, mass: {value: 0.020, source: estimate}, position: [0.230, 0, 0.040], dims: [0.025, 0.025, 0.008], external: true}
-  - {name: airspeed,     category: avionics, mass: {value: 0.010, source: estimate}, position: [-0.265, 0, -0.022], dims: [0.030, 0.020, 0.012]}
+  - {name: airspeed,     category: avionics, mass: {value: 0.010, source: estimate}, position: [-0.285, 0, -0.022], dims: [0.030, 0.020, 0.012]}
   - {name: telemetry_rx, category: avionics, mass: {value: 0.025, source: estimate}, position: [0.110, 0, -0.018], dims: [0.050, 0.030, 0.012], bay: electronics_bay}
   - {name: remote_id,    category: avionics, mass: {value: 0.015, source: estimate}, position: [0.060, 0, 0.015], dims: [0.040, 0.025, 0.010], bay: electronics_bay}
   - {name: pi_zero,      category: payload,  mass: {value: 0.026, source: estimate}, position: [0.000, 0, 0.010], dims: [0.065, 0.030, 0.012], bay: electronics_bay}

@@ -151,6 +151,9 @@ def run(ctx):
             ctx.gate(f"{name}: min airspeed in flight >= AIRSPEED_STALL [m/s]", r["min_airspeed_inflight"], Vs, ">=", "FAIL", "m/s")
         if r.get("max_cas") is not None:
             ctx.gate(f"{name}: max airspeed <= VNE [m/s]", r["max_cas"], env_["v_ne"], "<=", "FAIL", "m/s")
+        if r.get("max_cas") is not None and "vtol" not in name and not name.startswith("stall"):
+            ctx.gate(f"{name}: max airspeed <= AIRSPEED_MAX + 2 m/s (climb/descent overspeed)", r["max_cas"],
+                     params.get("AIRSPEED_MAX", 22) + 2, "<=", "WARN", "m/s")
         if r.get("max_nz") is not None and not name.startswith("stall"):
             ctx.gate(f"{name}: max load factor <= n_limit", r["max_nz"], nlim, "<=", "FAIL")
         if r.get("max_throttle_saturation_s") is not None and name.startswith(("mission", "smoke")):
@@ -163,7 +166,7 @@ def run(ctx):
                          note=f"max {r.get('xt_truth_max_m')} m; worst bend " + str(max(r.get("xt_truth_by_bend", {}).items(),
                                                                                          key=lambda kv: kv[1]["rms"], default=("-", {}))[0]))
         if name.startswith("smoke"):
-            ctx.gate("smoke: launch, box and RTL completed", any(m[1] == 11 for m in r.get("mode_changes", []) if isinstance(m, list)), True,
+            ctx.gate("smoke: launch, box and RTL completed", any(m[1] == 11 for m in r.get("mode_changes", []) if isinstance(m, (list, tuple))), True,
                      "bool", "FAIL")
         if name.startswith("launch"):
             weak = "weak" in name

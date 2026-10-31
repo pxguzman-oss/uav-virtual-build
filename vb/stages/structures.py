@@ -41,12 +41,14 @@ def run(ctx):
     ax.plot(V, vn["n_gust_ne"], color=PALETTE[3], lw=1.2, label=f"gust {env.get('gust_u_de', {}).get('at_v_ne', 5)} m/s")
     ax.axhline(env["n_limit_pos"], color=PALETTE[7], ls="--", lw=1.2, label=f"n limit +{env['n_limit_pos']}")
     ax.axhline(env.get("n_limit_neg", -1.5), color=PALETTE[7], ls="--", lw=1.2)
+    y0 = min(-2.5, env.get("n_limit_neg", -1.5) - 0.8)
     for x, lab in ((vn["Vs"], "Vs"), (vn["VA"], "VA"), (env["v_cruise"], "Vc"), (env["v_ne"], "VNE")):
         ax.axvline(x, color=INK2, ls=":", lw=0.8)
-        ax.text(x, ax.get_ylim()[1] if False else env["n_limit_pos"] + 0.9, lab, ha="center", color=INK2)
+        ax.text(x, y0 + 0.15, " " + lab, ha="left", va="bottom", color=INK2,
+                bbox=dict(boxstyle="round,pad=0.1", fc="#fcfcfb", ec="none"))
     ax.set(xlabel="equivalent airspeed [m/s]", ylabel="load factor n", title="V-n diagram (manoeuvre + Pratt gust)",
-           ylim=(min(-2.5, env.get("n_limit_neg", -1.5) - 0.8), env["n_limit_pos"] + 1.5))
-    ax.legend(loc="lower right", fontsize=7.5)
+           ylim=(y0, env["n_limit_pos"] + 1.5), xlim=(0, env["v_ne"] * 1.05))
+    ax.legend(loc="upper left", fontsize=7.5)
     save(fig, ctx.dir / "vn_diagram.png")
     ctx.add_file(ctx.dir / "vn_diagram.png", "V-n diagram", "figure")
     # spar moment and stress ratio
@@ -64,7 +66,8 @@ def run(ctx):
     ax[1].text(y.max() * 0.98, 1.0, "allowable (knocked down)", ha="right", va="bottom", color=PALETTE[7], fontsize=8)
     ax[1].set(xlabel="spanwise station y [mm]", ylabel="stress / allowable at ultimate",
               title=f"Spar utilisation (n x FoS {env.get('fos', 1.5)})")
-    ax[1].legend(loc="upper right")
+    ax[1].legend(loc="center right")
+    ax[1].set_ylim(0, max(1.15, ax[1].get_ylim()[1]))
     save(fig, ctx.dir / "spar_utilisation.png")
     ctx.add_file(ctx.dir / "spar_utilisation.png", "Wing bending moment and spar utilisation", "figure")
     fw = dict(PTCH2SRV_RMAX_UP=round(math.degrees(r["q_max_rad_s"])), PTCH2SRV_RMAX_DN=round(math.degrees(r["q_max_rad_s"])),

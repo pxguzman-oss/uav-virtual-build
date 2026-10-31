@@ -110,10 +110,13 @@ def versions():
         except Exception:
             pass
     ap = ardupilot_dir()
-    if ap and (Path(ap) / ".git").exists():
+    if ap:
         try:
-            v["ardupilot"] = subprocess.run(["git", "-C", ap, "describe", "--tags", "--always"], capture_output=True,
-                                            text=True, timeout=10).stdout.strip()
+            import re
+            txt = (Path(ap) / "ArduPlane" / "version.h").read_text()
+            v["ardupilot"] = re.search(r'THISFIRMWARE\s+"([^"]+)"', txt).group(1)
+            h = subprocess.run(["git", "-C", ap, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=10).stdout.strip()
+            v["ardupilot"] += f" ({h})" if h else ""
         except Exception:
             pass
     return v

@@ -193,6 +193,11 @@ def run(ctx):
                               "BATT_LOW_MAH": round(pack.cap * 1000 * (1 - pack.usable + pack.reserve * pack.usable)),
                               "BATT_CRT_MAH": round(pack.cap * 1000 * (1 - pack.usable))}
 
+    # takeoff throttle cap: static T/W ~0.65 is enough for a hand launch and limits the climb overspeed
+    if plan["airframe"].get("launch", {}).get("method") == "hand" and tw > 0.85:
+        opt = PR.duty_for_thrust(unit, motor, prop, pack, 0.65 * W, 0.0, rho0, soc=0.5)
+        if opt:
+            res["ardupilot_hints"]["TKOFF_THR_MAX"] = int(min(100, max(60, math.ceil(opt["duty"] * 20) * 5)))
     # ---- lift units (VTOL) ----------------------------------------------------------------------------
     lifts = P.units(plan, "lift")
     if lifts:
@@ -252,12 +257,13 @@ def run(ctx):
         ok = [(dd, o) for dd, o in zip(duties, ops) if o]
         ax[0].plot([dd * 100 for dd, _ in ok], [o["thrust_N"] for _, o in ok], color=PALETTE[i], label=f"thrust, {lab}")
         ax[1].plot([dd * 100 for dd, _ in ok], [o["I_bus_total"] for _, o in ok], color=PALETTE[i], label=f"battery current, {lab}")
-    ax[0].axhline(T_req, color=INK2, ls=":", lw=1); ax[0].text(22, T_req, " cruise thrust required", color=INK2, va="bottom")
-    ax[0].axhline(W * 0.6, color=PALETTE[7], ls=":", lw=1); ax[0].text(22, W * 0.6, " T/W 0.6 (hand launch)", color=PALETTE[7], va="bottom")
-    ax[1].axhline(unit["esc"]["i_cont"], color=PALETTE[7], ls=":", lw=1); ax[1].text(22, unit["esc"]["i_cont"], " ESC continuous", color=PALETTE[7], va="bottom")
+    ax[0].axhline(T_req, color=INK2, ls=":", lw=1); ax[0].text(99, T_req, "cruise thrust required", color=INK2, va="bottom", ha="right")
+    ax[0].axhline(W * 0.6, color=PALETTE[7], ls=":", lw=1); ax[0].text(99, W * 0.6, "T/W 0.6 (hand launch)", color=PALETTE[7], va="bottom", ha="right")
+    ax[1].axhline(unit["esc"]["i_cont"], color=PALETTE[7], ls=":", lw=1); ax[1].text(21, unit["esc"]["i_cont"], "ESC continuous", color=PALETTE[7], va="bottom", ha="left")
+    ax[1].set_ylim(0, max(unit["esc"]["i_cont"], wot["I_bus_total"]) * 1.15)
     ax[0].set(xlabel="throttle (ESC duty) [%]", ylabel="thrust [N]", title=f"{unit['motor'].get('model', '')} + {unit['prop'].get('model', '')}")
     ax[1].set(xlabel="throttle (ESC duty) [%]", ylabel="current [A]", title=f"Pack {pack.S}S{pack.P}P, 50 % SOC")
-    ax[0].legend(loc="upper left"); ax[1].legend(loc="upper left")
+    ax[0].legend(loc="upper left"); ax[1].legend(loc="center left")
     if pcurve:
         ax[2].plot([p["V"] for p in pcurve], [p["P_W"] for p in pcurve], "o-", ms=3, color=PALETTE[0], label="battery power")
         ax2 = ax[2].twinx(); ax2.plot([p["V"] for p in pcurve], [p["Wh_per_km"] for p in pcurve], color=PALETTE[1], label="Wh/km")
@@ -269,17 +275,20 @@ def run(ctx):
         mi = missions[0]
         fig, ax = plt.subplots(figsize=(8, 2.8))
         left = 0
+        seen = {}
         for i, r in enumerate(mi["segments"]):
-            ax.barh([0], [r["energy_Wh"]], left=left, color=PALETTE[i % 8], height=0.5, label=r["kind"])
+            seen[r["kind"]] = seen.get(r["kind"], 0) + 1
+            lab = r["kind"] + (f" {seen[r['kind']]}" if sum(x["kind"] == r["kind"] for x in mi["segments"]) > 1 else "")
+            ax.barh([0], [r["energy_Wh"]], left=left, color=PALETTE[i % 8], height=0.5, label=lab)
             left += r["energy_Wh"]
         ax.axvline(mi["available_after_reserve_Wh"], color=PALETTE[7], ls="--", lw=1.4)
-        ax.text(mi["available_after_reserve_Wh"], 0.33, " usable after reserve", color=PALETTE[7])
+        ax.text(mi["available_after_reserve_Wh"], -0.36, "usable after reserve ", color=PALETTE[7], ha="right", va="center")
         ax.axvline(mi["usable_Wh"], color=INK2, ls=":", lw=1.2)
-        ax.text(mi["usable_Wh"], -0.42, " usable", color=INK2)
-        ax.set_yticks([]); ax.set_xlabel("energy [Wh]")
+        ax.text(mi["usable_Wh"], -0.36, " usable", color=INK2, va="center")
+        ax.set_yticks([]); ax.set_xlabel("energy [Wh]"); ax.set_ylim(-0.45, 0.4)
         ax.set_xlim(0, max(left, mi["usable_Wh"]) * 1.15)
         ax.set_title(f"Mission energy: {mi['name']} ({mi['distance_km']:.0f} km, wind {mi['wind_mps']} m/s) = {mi['energy_Wh']:.0f} Wh", loc="left")
-        ax.legend(ncol=6, loc="upper center", bbox_to_anchor=(0.5, -0.35), fontsize=8)
+        ax.legend(ncol=7, loc="upper center", bbox_to_anchor=(0.5, -0.32), fontsize=8)
         save(fig, ctx.dir / "mission_energy.png")
         ctx.add_file(ctx.dir / "mission_energy.png", "Mission energy budget by segment vs usable energy", "figure")
     if lifts and res["vtol"].get("hover_table"):
