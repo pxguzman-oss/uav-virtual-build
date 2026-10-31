@@ -80,7 +80,7 @@ Stage DAG (execution order; deps -> stage):
       -> sitl (flightmodel) -> report (everything)
 
 The task brief listed propulsion before aero. aero_lowfi runs first because propulsion needs the drag
-polar (PIPELINE_DESIGN section 3). Without the aero stage, propulsion falls back to a stated polar and
+polar (docs/PIPELINE_DESIGN.md section 3). Without the aero stage, propulsion falls back to a stated polar and
 flags it.
 
 Stage result contract: `out/<plan>/<variant>/<stage>/result.json`
@@ -90,7 +90,7 @@ Stage result contract: `out/<plan>/<variant>/<stage>/result.json`
      summary {key figures}, data {machine-readable outputs for downstream stages}, files [{path, caption, kind}],
      notes [], data_hash}
 
-Caching (PIPELINE_DESIGN section 6):
+Caching (docs/PIPELINE_DESIGN.md section 6):
 
 - key = sha256 of the hashed plan subset, the stage code (stage + library files), the fidelity (when it
   matters) and the data_hash of every upstream result.
@@ -178,12 +178,48 @@ Notes:
 
 5. FIDELITY LEVELS AND RUNTIMES (2 vCPU / 7 GB container, measured)
 -----------------------------------------------------------------
-@@RUNTIMES@@
+Wall times measured on this 2-vCPU container. Cold means empty out/ and caches; warm means only the
+cheap stages re-run.
+
+| fidelity | geometry | CFD | SITL matrix (fixed wing) | SITL (variant with lift units) | measured wall |
+|---|---|---|---|---|---|
+| quick | 2 Workbench views | skipped | smoke: hand launch, 4-wp box, RTL (~35 s) | VTOL takeoff, transition, 1 km box, VTOL land (~65 s) | base 68 s cold (tests/smoke.sh); vtol 1.7 min |
+| standard | 6 views | `analysis.cfd.kind` (Stork: wing-body), alphas_standard (1 alpha), surf level 5/6, ~0.4 M cells: 6 min | canal mission L1 15 + L1 subset (10) + stall + launch nominal/weak + RC-loss failsafe: 6 runs, 4.7 min | vtol + vtol in the mission wind | base 11.6 min cold; vtol @@VTOLSTD@@ |
+| full | 7 views | `kind_full` (wing-body-tail), alphas_full (0/4/8), surf level 6/7, ~1-1.5 M cells: est. 1-1.7 h (not timed end-to-end; research l67 wing case: mesh 9 min + 8 min/alpha) | standard + L1 10/13/15/18/22 + cruise sweep + battery and GCS failsafes + mission in every environment case: 15 runs, 20.7 min measured | + every environment case | est. 1.5-2.5 h, dominated by CFD |
+
+Per-stage costs (base):
+
+| stage | time |
+|---|---|
+| ingest | <1 s |
+| geometry | 13 s (quick) / 33 s (standard; Blender renders ~5 s/view) |
+| mass | 1 s |
+| clash | 2 s |
+| aero_lowfi | 7 s (AeroBuildup 3 speeds + AVL 5 alphas + VLM) |
+| propulsion | 4 s |
+| structures | 1 s |
+| flightmodel | 1 s |
+| report | 3-6 s |
+
+- SITL runs at about 2-4.5x real time.
+- A warm re-run of an unchanged plan takes about 20 s.
+- A plan edit re-runs only the stages whose hashed inputs changed. For example, editing a component
+  mass re-runs geometry, aero and SITL, but not CFD unless the shape changed.
+- Base and VTOL share the CFD cache entry, because the moment reference is the design CG.
+- The first-time install takes about 2 min plus 20-30 min for the ArduPilot build. The other steps
+  (venv from the pip cache, AVL 20 s, xfoil-python 30 s) were measured in a scratch copy.
+
+Sub-agents / sharding:
+
+- Each stage reads only `result.json` files, so `--only STAGE` on a shared out dir works.
+- `VB_SITL_TESTS=fs_batt,stall` restricts the SITL matrix to named runs. The subset is part of the
+  cache key.
+- Parallel SITL runs pick a free instance automatically (`-I n`, ports 5760+10n / 9002+10n).
 
 
 6. GATES AND THE VERDICT
 ------------------------
-Defaults follow PIPELINE_DESIGN section 4: ingest validity; CG within +-3 % MAC; fit (bays, protrusions,
+Defaults follow docs/PIPELINE_DESIGN.md section 4: ingest validity; CG within +-3 % MAC; fit (bays, protrusions,
 interference, >= 2 mm clearance, rotor clearance >= 10 mm, battery travel can fix the CG); static margin
 5-20 %; Cm_a < 0, Cn_b > 0, Cl_b < 0; linear modes; roll authority; V-tail volumes; stall speed vs hand
 launch; ESC/connector/wire/cell/motor current margins; motor thermal; cruise duty <= 0.65; T/W; mission
@@ -209,7 +245,7 @@ The soft-input table ranks the estimates by how many non-PASS gates they drive, 
 
 7. CALIBRATION LOOP
 -------------------
-Bench and flight measurements replace estimates, step by step (PIPELINE_DESIGN section 8):
+Bench and flight measurements replace estimates, step by step (docs/PIPELINE_DESIGN.md section 8):
 
 | step | measurement | what it updates |
 |---|---|---|
@@ -282,7 +318,7 @@ calibrations carry into the VTOL variant automatically, because the variant is a
   - The weak-throw case (15 m/s^2 for 0.4 s) is expected to fail with ArduPlane's takeoff logic. It is a
     WARN that drives a training item, not a FAIL.
 - The soft-input ranking is gate-driver matching, not a Monte-Carlo or tornado sensitivity analysis.
-  The `uncertainty` fields are recorded but no corner cases are run yet (PIPELINE_DESIGN section 6:
+  The `uncertainty` fields are recorded but no corner cases are run yet (docs/PIPELINE_DESIGN.md section 6:
   N=50 LHS for cheap stages is a planned extension).
 - One SITL instance runs at a time; stages run sequentially. Sub-agents can shard with --only on separate
   out dirs.

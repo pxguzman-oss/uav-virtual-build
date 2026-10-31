@@ -202,6 +202,23 @@ pre{background:#f4f3ef;padding:8px;font-size:11.5px;overflow-x:auto}.verdict{fon
         return "\n".join(out)
 
 
+VERIFY_KW = [(r"Tg", "IR-thermometer skin temperature in sun on a hot day; heat-soak test of a printed coupon"),
+             (r"EI step|tip deflection|spar", "C4 sandbag proof load to n_limit; inspect skin at tube ends"),
+             (r"servo", "bench torque test at supply voltage; C5 servo current at full throw"),
+             (r"launch|throw", "SITL re-run + field hand-launch practice with logging"),
+             (r"failsafe", "bench failsafe test (props off), then SITL re-run"),
+             (r"AWG|ESC|connector|current", "C2 thrust stand with current logging; feel/IR-check leads after a WOT run"),
+             (r"WOT time", "IR-thermometer motor check after the first WOT climb"),
+             (r"energy|Wh", "F3 cruise legs + BAT log; re-run with calibrated drag/propulsion")]
+
+
+def verification(stage, check):
+    for pat, txt in VERIFY_KW:
+        if re.search(pat, check, re.I):
+            return txt
+    return VERIFY.get(stage, "review")
+
+
 def mitigation(check):
     for pat, txt in MITIGATION:
         if re.search(pat, check, re.I):
@@ -341,7 +358,7 @@ def run(ctx):
         S = SEVERITY.get(s, 3) if g["status"] == "FAIL" else max(SEVERITY.get(s, 3) - 1, 2)
         risks.append(dict(ID=f"R{len(risks) + 1:02d}", stage=s, status_gate=g["status"], hazard=g["check"],
                           cause=(g.get("note") or "")[:200], effect=f"value {fmt(g['value'])} vs limit {fmt(g['limit'])} {g.get('unit', '')}".strip(),
-                          L=L, S=S, score=L * S, mitigation=mitigation(g["check"]), verification=VERIFY.get(s, "review"),
+                          L=L, S=S, score=L * S, mitigation=mitigation(g["check"]), verification=verification(s, g["check"]),
                           owner="", status="open", evidence=f"{s}/result.json"))
     risks.sort(key=lambda r: -r["score"])
     with open(out / "risk_register.csv", "w", newline="") as f:
