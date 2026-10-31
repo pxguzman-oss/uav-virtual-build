@@ -20,3 +20,12 @@ NOTE: aero/cases/mesh_l67 simpleFoam (alpha 8) was running at start - never touc
      CFD moment ref = design CG (base/vtol share CFD cache), VTOL lift ESC moved forward (CG), run.py venv re-exec.
      Full-fidelity SITL matrix test running in out_full (log /tmp/full_sitl.log).
      NEXT: final standard base + vtol quick/standard with final code, fill README runtimes (@@RUNTIMES@@), final report.
+[M4] 00:10 FINAL. All runs complete with final code:
+     quick base (tests/smoke.sh, cold) 72 s; quick vtol 104 s; standard base 12.0 min (CFD wing-body 6.7 min, SITL 6 runs
+     4.9 min; geometry cached, +33 s cold); standard vtol 4.1 min (CFD cache shared); full SITL matrix (15 runs) 20.7 min
+     in out_full (fs_batt re-tested after switching to BATT_LOW_MAH). Full-fidelity CFD (wingbodytail, 3 alphas,
+     levels 6/7) NOT timed end-to-end (estimate 1-1.7 h).
+     Verdicts: base NO-GO (1 FAIL: LW-PLA Tg vs hot-day skin temp; 8 WARN). vtol NO-GO (3 FAIL: T/W 1.17 and hover duty
+     0.87 at the 3.1 kg AUW case, Tg; 11 WARN).
+     Open ideas: Monte-Carlo/tornado on uncertainty fields, servo swept volumes, conventional-tail aero, CFD->flight-model
+     blending, AUTOTUNE in SITL.

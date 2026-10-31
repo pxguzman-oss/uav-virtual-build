@@ -184,7 +184,7 @@ cheap stages re-run.
 | fidelity | geometry | CFD | SITL matrix (fixed wing) | SITL (variant with lift units) | measured wall |
 |---|---|---|---|---|---|
 | quick | 2 Workbench views | skipped | smoke: hand launch, 4-wp box, RTL (~35 s) | VTOL takeoff, transition, 1 km box, VTOL land (~65 s) | base 68 s cold (tests/smoke.sh); vtol 1.7 min |
-| standard | 6 views | `analysis.cfd.kind` (Stork: wing-body), alphas_standard (1 alpha), surf level 5/6, ~0.4 M cells: 6 min | canal mission L1 15 + L1 subset (10) + stall + launch nominal/weak + RC-loss failsafe: 6 runs, 4.7 min | vtol + vtol in the mission wind | base 11.6 min cold; vtol @@VTOLSTD@@ |
+| standard | 6 views | `analysis.cfd.kind` (Stork: wing-body), alphas_standard (1 alpha), surf level 5/6, ~0.4 M cells: 6 min | canal mission L1 15 + L1 subset (10) + stall + launch nominal/weak + RC-loss failsafe: 6 runs, 4.7 min | vtol + vtol in the mission wind | base 11.6 min cold; vtol 4.1 min (CFD shared from base cache, SITL 2 runs 3.2 min) |
 | full | 7 views | `kind_full` (wing-body-tail), alphas_full (0/4/8), surf level 6/7, ~1-1.5 M cells: est. 1-1.7 h (not timed end-to-end; research l67 wing case: mesh 9 min + 8 min/alpha) | standard + L1 10/13/15/18/22 + cruise sweep + battery and GCS failsafes + mission in every environment case: 15 runs, 20.7 min measured | + every environment case | est. 1.5-2.5 h, dominated by CFD |
 
 Per-stage costs (base):
@@ -315,8 +315,8 @@ calibrations carry into the VTOL variant automatically, because the variant is a
   - Gains in data/ardupilot/plane_defaults.parm are sane defaults, not a tune. AUTOTUNE is not run in
     SITL.
   - QuadPlane runs use SIM_RATE_HZ 1200 and the same 4S pack for lift and cruise.
-  - The weak-throw case (15 m/s^2 for 0.4 s) is expected to fail with ArduPlane's takeoff logic. It is a
-    WARN that drives a training item, not a FAIL.
+  - The weak-throw case (15 m/s^2 for 0.4 s, released at 6 m/s, below Vs) crashes even though the
+    motor starts after 0.5 s. It is a WARN that drives a training item (throw >= 10 m/s), not a FAIL.
 - The soft-input ranking is gate-driver matching, not a Monte-Carlo or tornado sensitivity analysis.
   The `uncertainty` fields are recorded but no corner cases are run yet (docs/PIPELINE_DESIGN.md section 6:
   N=50 LHS for cheap stages is a planned extension).
