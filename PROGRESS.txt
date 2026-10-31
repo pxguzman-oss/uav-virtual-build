@@ -29,3 +29,11 @@ NOTE: aero/cases/mesh_l67 simpleFoam (alpha 8) was running at start - never touc
      0.87 at the 3.1 kg AUW case, Tg; 11 WARN).
      Open ideas: Monte-Carlo/tornado on uncertainty fields, servo swept volumes, conventional-tail aero, CFD->flight-model
      blending, AUTOTUNE in SITL.
+
+=== REVIEW FIX ROUND (2026-10-31, REVIEW.txt 24 findings) ===
+Order: C1, C2, M5/M6, M1/M9, M3, M4, M7/M8, M10, minors; then clean re-runs (standard base+vtol, quick base),
+figure review, REVIEW_RESPONSE.txt. Scratch test dir /tmp/vbt (copy of out/), never out_fullrun.
+[R1] C1+M2 committed (8853a34): vb/liftmodel.py = single lift model. Base now: Vs nominal 9.23 / pessimistic
+     9.72 m/s (CLmax trimmed 1.046 / 0.942, Raymer cap 0.9 x NeuralFoil 1.243). Launch gate (pessimistic)
+     FAILs 9.72 > 11/1.2; AIRSPEED_MIN 11 (plan override) / Vs_pess = 1.13 < 1.2 FAILs. Plan left as is (real finding).
+     CFD standard alphas now [2, 7] (CFD cache invalid -> ~12 min CFD on next standard run).
