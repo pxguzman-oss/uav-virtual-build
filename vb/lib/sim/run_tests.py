@@ -31,6 +31,7 @@ def new_run(name, **kw):
     kw.setdefault("gen_dir", CFG["gen_dir"])
     kw.setdefault("parm_files", CFG["parm_files"])
     kw.setdefault("home", home_str())
+    kw.setdefault("instance", CFG.get("instance", 0))
     return SitlRun(os.path.join(CFG["results"], name), **kw)
 
 M = mavutil.mavlink

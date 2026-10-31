@@ -410,7 +410,7 @@ def analyze_vtol(run, meta, tr, df, events):
     ax[0].plot(tr.t, tr.h_agl, color=C[0]); ax[0].set_ylabel("height AGL [m]")
     ax[1].plot(tr.t, tr.V_cas, color=C[0]); ax[1].set_ylabel("airspeed [m/s]")
     ax[2].plot(tr.t, tr.lift_rpm_mean, color=C[0], label="lift motors (mean)")
-    ax[2].plot(tr.t, tr.rpm, color=C[1], label="pusher"); ax[2].set_ylabel("rpm"); ax[2].legend(loc="upper right")
+    ax[2].plot(tr.t, tr.rpm, color=C[1], label="pusher"); ax[2].set_ylabel("rpm"); ax[2].legend(loc="upper left", ncol=2)
     ax[3].plot(tr.t, tr.P_elec_W, color=C[0]); ax[3].set_ylabel("battery power [W]"); ax[3].set_xlabel("sim time [s]")
     ax[0].set_title("QuadPlane VTOL mission (JSBSim bridge, 5 motors)", loc="left")
     save(fig, run, "vtol.png")

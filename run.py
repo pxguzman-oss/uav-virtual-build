@@ -62,7 +62,7 @@ def main(argv=None):
     r = Runner(a.plan, a.variant, a.fidelity, a.out, a.force, a.only, a.until, a.quiet, a.calibration)
     r.run()
     rep = r.run_dir / "report" / "result.json"
-    if rep.exists():
+    if "report" in r.selected and rep.exists():
         d = json.loads(rep.read_text()).get("data", {})
         v = d.get("overall")
         if v:

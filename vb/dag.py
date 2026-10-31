@@ -83,9 +83,13 @@ class Runner:
             cfdk = cfg.get("kind_full", cfg.get("kind", "wing")) if self.fidelity == "full" else cfg.get("kind", "wing")
             ls = self.plan["airframe"]["lifting_surfaces"]
             inputs["geom"] = [P.main_wing(self.plan)] if cfdk == "wing" else [ls, self.plan["airframe"].get("fuselage")]
-            m = read_result(self.run_dir / "mass") or {}
-            cg = (m.get("data") or {}).get("cg_m")
-            inputs["cg_x_mm"] = round(cg[0] * 1000) if cg else None
+            cg_t = P.val((self.plan.get("analysis") or {}).get("cg_target_x"))
+            if cg_t is None:
+                m = read_result(self.run_dir / "mass") or {}
+                cg = (m.get("data") or {}).get("cg_m")
+                cg_t = cg[0] if cg else None
+            inputs["moment_ref_x_mm"] = None if cg_t is None else round(cg_t * 1000)
+            inputs["alphas"] = cfg.get("alphas_full" if self.fidelity == "full" else "alphas_standard")
         else:
             ups = {}
             for d in st["deps"] + st["soft"]:

@@ -230,7 +230,7 @@ def write_avl(g, path, afdir):
             # vortices to next section: ~1 per 25 mm, min 1 (equal spacing within a segment)
             ns = max(1, int(round(abs(yy[i + 1] - y) / 0.025))) if i + 1 < len(yy) else 1
             L += ["SECTION", f"{xle:.5f} {side * y:.5f} {zle:.5f} {ch:.5f} {tw:.3f} {ns} 0.0", "AFILE",
-                  os.path.join(afdir, f"{g['wing']['airfoil']}.dat")]
+                  os.path.relpath(os.path.join(afdir, f"{g['wing']['airfoil']}.dat"), os.path.dirname(os.path.abspath(path)))]
             for cname in ("flap", "aileron"):
                 if cname not in ctl:
                     continue
@@ -259,7 +259,7 @@ def write_avl(g, path, afdir):
             f.write(f" {x:.5f} {d_ / 2:.5f}\n")
         for x, d_ in zip(xn[1:], dd[1:]):
             f.write(f" {x:.5f} {-d_ / 2:.5f}\n")
-    L += ["#" + "=" * 60, "BODY", "Fuselage", "24 1.0", "BFIL", bfile, ""]
+    L += ["#" + "=" * 60, "BODY", "Fuselage", "24 1.0", "BFIL", os.path.relpath(bfile, os.path.dirname(os.path.abspath(path))), ""]
     open(path, "w").write("\n".join(L) + "\n")
     names = [f"flap_R", "aileron_R", "flap_L", "aileron_L", "rv_R", "rv_L"]
     return names
@@ -277,13 +277,14 @@ def avl_control_order(path):
 
 def run_avl(avl_exe, avl_file, alphas, workdir, tag="st"):
     """Run AVL at several alpha; return list of parsed ST outputs."""
-    cmds = [f"load {avl_file}", "oper"]
+    # AVL (Fortran) truncates file names at 80 characters: run in workdir with RELATIVE names
+    cmds = [f"load {os.path.relpath(avl_file, workdir)}", "oper"]
     outs = []
     for a in alphas:
         fn = os.path.join(workdir, f"avl_{tag}_a{a:+05.1f}.st")
         if os.path.exists(fn):
             os.remove(fn)
-        cmds += [f"a a {a}", "x", "st", fn]
+        cmds += [f"a a {a}", "x", "st", os.path.basename(fn)]
         outs.append(fn)
     cmds += ["", "quit"]
     t0 = time.time()

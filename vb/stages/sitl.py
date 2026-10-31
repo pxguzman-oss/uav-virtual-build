@@ -35,6 +35,22 @@ def clean_parm(src, dst):
     Path(dst).write_text("\n".join(lines) + "\n")
 
 
+def free_instance(max_n=10):
+    """First SITL instance whose MAVLink TCP port and JSON/control UDP ports are free (parallel runs/sub-agents)."""
+    import socket
+    for i in range(max_n):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as t:
+                t.bind(("127.0.0.1", 5760 + 10 * i))
+            for p in (9002 + 10 * i, 9003 + 10 * i, 9012 + 10 * i):
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:
+                    u.bind(("127.0.0.1", p))
+            return i
+        except OSError:
+            continue
+    return 0
+
+
 def matrix(ctx, is_vtol, fm):
     an = ctx.plan.get("analysis", {}).get("sitl", {}) or {}
     envs = ctx.plan.get("environment_cases") or []
@@ -96,7 +112,9 @@ def run(ctx):
     an = plan.get("analysis", {}).get("sitl", {}) or {}
     res_dir = ctx.dir / "runs"
     res_dir.mkdir(exist_ok=True)
-    RT.CFG.update(results=str(res_dir), gen_dir=str(gen), model=model, parm_files=[str(sp), str(plumb)],
+    inst = free_instance()
+    ctx.note(f"SITL instance -I {inst} (MAVLink tcp {5760 + 10 * inst}, JSON udp {9002 + 10 * inst})")
+    RT.CFG.update(results=str(res_dir), gen_dir=str(gen), model=model, parm_files=[str(sp), str(plumb)], instance=inst,
                   survey_alt=an.get("survey_alt", 60), takeoff_alt=an.get("takeoff_alt", 40),
                   cruise_v=plan["envelope"]["v_cruise"])
     params = fm["params"]

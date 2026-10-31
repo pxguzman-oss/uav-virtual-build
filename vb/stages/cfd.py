@@ -37,7 +37,10 @@ def run(ctx):
     import aerosandbox as asb
 
     mass = ctx.data("mass")
-    cg = mass["cg_m"]
+    from .. import plan as P
+    # moment reference = design CG (shape-only cache key -> variants share the clean-airframe CFD); else the CG
+    cg_t = P.val(plan.get("analysis", {}).get("cg_target_x"))
+    cg = [cg_t, 0.0, 0.0] if cg_t is not None else mass["cg_m"]
     g, sa = geom2aero.build(plan, cg, mass["mass_kg"])
     g["vtol"] = False                                   # CFD answers clean-airframe questions
     full = ctx.fidelity == "full"
@@ -131,7 +134,7 @@ def run(ctx):
         axx.legend(loc="best", fontsize=7.5)
     ax[0].set_title(f"CFD vs low order: {kind}, V {V:g} m/s", loc="left")
     ax[1].set_title("CD (RANS fully turbulent: high)", loc="left")
-    ax[2].set_title("Cm about the CG", loc="left")
+    ax[2].set_title(f"Cm about x = {1000 * cg[0]:.0f} mm", loc="left")
     save(fig, ctx.dir / "cfd_vs_lowfi.png")
     ctx.add_file(ctx.dir / "cfd_vs_lowfi.png", "CFD points vs AeroBuildup/VLM on the same geometry", "figure")
     # tidy: keep logs/results, drop the big processor/mesh directories
