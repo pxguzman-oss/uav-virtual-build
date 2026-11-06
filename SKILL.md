@@ -12,7 +12,7 @@ The work is done by the **vbuild** pipeline, a code repo. This file says how to 
 ## 0. Get the pipeline
 
 1. Look for an existing checkout: `/home/claude/vbuild`, `~/uav-virtual-build`, or the session's repos. If none exists:
-   - Attach the private repo with `add_repo` (owner `txfg`, repo `uav-virtual-build`, access `read`, or `push` to commit fixes). Then `git clone https://github.com/txfg/uav-virtual-build ~/uav-virtual-build`.
+   - Attach the private repo with `add_repo` (owner `pxguzman-oss`, repo `uav-virtual-build`, access `read`, or `push` to commit fixes). Then `git clone https://github.com/pxguzman-oss/uav-virtual-build ~/uav-virtual-build`.
    - If the repo can't be reached, tell the user and ask for the repo or a tarball. Don't rewrite the pipeline from memory.
 2. `bash setup/install.sh` (idempotent, Ubuntu 24.04). The first run takes ~40 min, mostly the ArduPilot SITL build (`./waf plane`, pinned to Plane-4.7.2).
    - Run it with `nohup … > /tmp/install.log 2>&1 &` and poll, because containers can restart.
