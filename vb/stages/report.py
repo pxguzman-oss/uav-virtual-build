@@ -20,14 +20,17 @@ ROOT = Path(__file__).resolve().parents[2]
 TITLES = {"ingest": "0 Ingest (plan validation)", "geometry": "1 Geometry & renders", "mass": "2 Mass, CG, inertia",
           "clash": "3 Fit & clash", "aero_lowfi": "6a Aerodynamics (low order)", "propulsion": "5 Propulsion & electrical",
           "structures": "4 Structures & build risk", "cfd": "6b CFD", "flightmodel": "7 Flight model & ArduPilot params",
-          "sitl": "8 SITL test matrix"}
+          "sitl": "8 SITL test matrix", "vtol": "5b Quadplane hover, transition, failures", "thermal": "5c Thermal",
+          "balance": "3b Auto-balance options"}
 SEVERITY = {"structures": 5, "sitl": 5, "propulsion": 4, "aero_lowfi": 4, "mass": 4, "clash": 3, "flightmodel": 4, "ingest": 3,
-            "geometry": 2, "cfd": 2}
+            "geometry": 2, "cfd": 2, "vtol": 5, "thermal": 4, "balance": 3}
 VERIFY = {"mass": "C0 weigh every part + balance-point check", "geometry": "compare against the CAD/STL pack (cad_import)",
           "clash": "dry-fit the printed parts and components", "propulsion": "C2 thrust stand (thrust/current/rpm at 3 voltages), C3 discharge test",
           "structures": "C4 sandbag proof load to n_limit + tap test (phone accelerometer)", "aero_lowfi": "F2 glide polar, F4 doublets / AUTOTUNE",
           "cfd": "F2/F3 flight-test polar", "flightmodel": "review derived.param; SITL re-run", "sitl": "re-run SITL after the fix; F1 first-flight log review",
-          "ingest": "fix the plan file"}
+          "ingest": "fix the plan file", "vtol": "F5 tethered / low hover: QTUN.ThO, RCOU spread between motors, yaw hold in wind",
+          "thermal": "thermocouples or IR thermometer on the flagged parts after a hover and after a ground soak in the sun",
+          "balance": "C0 balance-point check of the built aircraft"}
 MITIGATION = [
     (r"Tg", "Print skins and spar sockets in LW-ASA/ASA/PETG, or paint the top skins white and keep the aircraft shaded; re-run with the new material card."),
     (r"CG x vs design", "Move the battery (see mass stage shift) or add nose/tail ballast; mark the balanced battery position in the bay."),
@@ -301,6 +304,9 @@ def run(ctx):
             problems.append(f"{s}: {len(er)} missing-evidence ERROR gate(s)")
         top = (f or er or w or [None])[0]
         topt = f"{top['check']} ({fmt(top['value'])})" if top else (r.get("error", "")[:120] if r.get("status") != "ok" else "-")
+        if r.get("status") == "skipped" and (r.get("summary") or {}).get("not_applicable"):
+            rows.append([f"[{TITLES[s]}](#{s})", "N/A", 0, 0, str(r["summary"]["not_applicable"])])
+            continue
         if r.get("status") == "skipped":
             v, topt = "NOT RUN", "skipped: " + str((r.get("summary") or {}).get("skipped", "skipped"))
             problems.append(f"{s} NOT RUN ({(r.get('summary') or {}).get('skipped', 'skipped')})")
@@ -450,7 +456,11 @@ def run(ctx):
         st = pd["cruise_unit"]["static_wot"]["full"]
         chk.append(f"Bench: static WOT on a full pack should give ~{st['thrust_g']:.0f} g thrust at ~{st['I_bus_total']:.0f} A "
                    f"({st['rpm']:.0f} rpm); stop if current exceeds the ESC rating.")
-    chk += ["Load derived.param (report folder) into the autopilot; verify SERVOn_FUNCTION map and reversals on the bench.",
+    appr = (plan.get("meta") or {}).get("approval") or {}
+    approved = bool(appr.get("design_approved"))
+    chk += [("Load derived.param (report folder) into the autopilot; verify SERVOn_FUNCTION map and reversals on the bench." if approved else
+             "ArduPilot parameter file NOT released: the design is not marked approved (meta.approval.design_approved). Approve a balanced "
+             "design, re-run the report, then load derived.param."),
             "RC-loss and battery failsafe bench test (props off) before the first flight.",
             "Weigh all printed parts and update the plan (calibration C0), then re-run the pipeline."]
 
@@ -609,6 +619,30 @@ def run(ctx):
                 D.img(p, f["caption"])
         if s == "sitl" and (rd / "sitl" / "l1_sweep.png").exists() and not any("l1_sweep" in f["path"] for f in figs):
             D.img(rd / "sitl" / "l1_sweep.png", "L1 sweep")
+        if s == "balance" and stage_ok("balance"):
+            bd = r["data"]
+            D.p(f"Target CG {1000*bd['target']['target']:.1f} mm aft of the wing-root leading edge, allowed "
+                f"{1000*bd['target']['lo']:.1f} to {1000*bd['target']['hi']:.1f} mm ({bd['target']['source']}). Options are ranked by "
+                "effort, range cost and what they leave unsolved; 0 is the layout as drawn. Each one has an overlay to re-run it "
+                "through the whole pipeline (tools/balance_apply.py); the numbers below are estimates until that run.")
+            D.table(["#", "option", "CG err mm", "SM %", "CG to thrust centre mm", "AUW g", "range %", "reaches target", "pros", "cons"],
+                    [[o["id"], o["title"], fmt(o["cg_err_mm"]), fmt(o["static_margin_pct"]), fmt(o["thrust_centre_offset_mm"]), fmt(o["d_mass_g"]),
+                      fmt(o["range_change_pct"]), "yes" if o["feasible"] else "NO", "; ".join(o["pros"])[:260], "; ".join(o["cons"])[:320]]
+                     for o in bd["options"]])
+            D.p("Files: balance/balance_options.md (full pros and cons with the change list per option), balance/fusion_change_list.csv.")
+        if s == "thermal" and stage_ok("thermal"):
+            td = r["data"]
+            D.table(["part", "limit C", "peak nominal C", "peak pessimistic C", "hottest in", "margin (pess.) K"],
+                    [[x["part"], fmt(x["limit_C"]) + (" (default)" if x["limit_source"] == "default" else ""), fmt(x["peak_nominal_C"]),
+                      fmt(x["peak_pessimistic_C"]), x["hottest_phase"], fmt(x["margin_pess_K"])] for x in td["parts"]])
+            if td.get("vent_sizing"):
+                D.table(["bay", "heat in cruise W", "bay air in cruise C", "vent area for the parts cm2", "vent area for the print cm2", "needs its own heat sink"],
+                        [[x["bay"], fmt(x["heat_in_cruise_W"]), fmt(x["bay_air_cruise_C"]),
+                          fmt(x.get("vent_area_for_parts_cm2")) if x.get("vent_area_for_parts_cm2") is not None else x.get("vent_area_for_parts_note", "-")[:80],
+                          fmt(x.get("vent_area_for_print_cm2")) if x.get("vent_area_for_print_cm2") is not None else x.get("vent_area_for_print_note", "-")[:80],
+                          ", ".join(x.get("needs_own_heat_sink") or []) or "-"] for x in td["vent_sizing"]])
+            D.p("Lumped model, +-30-50 % on the convection inputs: FAIL = over the limit with nominal inputs, WARN = only with pessimistic "
+                "inputs. Parts within 10 K of a limit are the ones to put a thermocouple on, or to resolve with conjugate heat-transfer CFD.")
         if s == "propulsion" and stage_ok("propulsion"):
             pd = r["data"]
             ops = pd["cruise_unit"]
@@ -654,9 +688,19 @@ def run(ctx):
         if s == "flightmodel" and stage_ok("flightmodel"):
             d = r["data"]
             D.table(["derived parameter", "value", "why"], [[k, d["params"].get(k, v), d["derived_why"].get(k, "")] for k, v in d["derived"].items()])
-            shutil.copy(rd / "flightmodel" / "derived.param", out / "derived.param")
-            shutil.copy(rd / "flightmodel" / "derived_vs_defaults.txt", out / "derived_vs_defaults.txt")
-            D.p("Full parameter file: derived.param (in this report folder); diff against the defaults: derived_vs_defaults.txt.")
+            for stale_f in ("derived.param", "derived_vs_defaults.txt"):
+                if (out / stale_f).exists():
+                    (out / stale_f).unlink()
+            if approved and overall in ("GO", "CONDITIONAL GO"):
+                shutil.copy(rd / "flightmodel" / "derived.param", out / "derived.param")
+                shutil.copy(rd / "flightmodel" / "derived_vs_defaults.txt", out / "derived_vs_defaults.txt")
+                D.p(f"Design approved by {appr.get('by', '?')} on {appr.get('date', '?')}. Full parameter file: derived.param (in this report "
+                    "folder); diff against the defaults: derived_vs_defaults.txt.")
+            else:
+                why_not = ("the design is not marked approved (meta.approval: {design_approved: true, by: ..., date: ...})" if not approved
+                           else f"the verdict is {overall}")
+                D.p(f"The loadable parameter file is WITHHELD: {why_not}. The table above is for review only; the file is released "
+                    "when a balanced design is approved and the run is GO or CONDITIONAL GO.")
 
     D.h(2, "Risk register", "risks")
     D.p(f"{len(risks)} rows (one per WARN/FAIL/ERROR), sorted by L x S. CSV: risk_register.csv. Owner/status columns are for the team.")

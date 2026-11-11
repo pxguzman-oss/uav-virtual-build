@@ -6,3 +6,7 @@ tools/foam_sha1_shim/*.so
 third_party/
 setup/paths.env
 out_*/
+tools/src/
+tools/bin/
+setup/paths.env
+*.bak

@@ -139,6 +139,20 @@ properties:
       references: {type: array, items: {type: string}}
       owner: {type: string}
       notes: {type: string}
+      sourcing:
+        type: object
+        description: "Which bought parts are allowed. ASK THE USER at intake. Screens the parts list (ingest) and the swaps the balance stage may propose."
+        properties:
+          policy: {enum: [any, us_made, ndaa], description: "any part | US-made only | not from an NDAA covered country (screening aid, not a legal determination)"}
+          note: {type: string}
+      approval:
+        type: object
+        description: "The loadable ArduPilot parameter file is released into the report only when design_approved is true and the run is GO / CONDITIONAL GO."
+        properties:
+          design_approved: {type: boolean}
+          by: {type: string}
+          date: {type: string}
+      intake: {type: object, description: "written by tools/intake.py: CAD frame, counts"}
     additionalProperties: true
 
   frames:
@@ -243,6 +257,15 @@ properties:
         torque_stall_Nm: {type: number, description: "servos: stall torque at supply voltage"}
         supply_V: {type: number}
         variant_only: {type: string}
+        power_W: {$ref: "#/$defs/sourced_number", description: "heat the part dissipates when powered (thermal stage); else avionics.avionics_power_W is shared out"}
+        movable: {type: boolean, description: "auto-balance may slide it in x (default: internal energy/avionics/payload parts and ESCs; cameras, GPS, pitot are fixed)"}
+        fixed: {type: boolean}
+        move_range_x: {type: array, items: {type: number}, minItems: 2, maxItems: 2, description: "allowed CG x range [m] when it is not simply 'inside its bay'"}
+        origin: {type: string, description: "country of manufacture as stated by the vendor (sourcing policy)"}
+        origin_verified: {type: boolean}
+        role: {type: string, description: "lift_motor | cruise_motor | lift_esc | cruise_esc | battery | fc | ... (from the parts list)"}
+        cad_body: {type: string, description: "name path(s) of the CAD bodies this component came from (tools/intake.py)"}
+        cad_part: {type: string, description: "name of the airframe.cad_import part that carries this component's mass and shape"}
       additionalProperties: true
 
   propulsion:
@@ -394,6 +417,11 @@ properties:
       sitl: {type: object, additionalProperties: true,
              description: "home, survey_alt, course, l1_periods_standard, l1_periods_full, launch_accel, launch_duration"}
       vtol_auw_cases_kg: {type: array, items: {type: number}}
+      vtol: {type: object, additionalProperties: true, description: "transition_s, hover_allowance_s (mission energy allowances, checked by the vtol stage)"}
+      balance: {type: object, additionalProperties: true,
+                description: "default_travel_m (0.03), max_wing_shift_m (0.08), max_bay_extension_m (0.06), thrust_centre_tol_frac (0.05 of the fore-aft motor spacing), wing_attached [names], ballast_stations {nose: [x,y,z], tail: [x,y,z]}, alternatives {battery: [{part_number, mass, dims, energy_ratio, origin}]}"}
+      thermal: {type: object, additionalProperties: true,
+                description: "vents {bay: inlet area m2}, motor_mount_material, ground_soak_s (900), post_land_soak_s (300), sustained_hover_s (600), battery_min_C (10)"}
     additionalProperties: true
 
   calibration:

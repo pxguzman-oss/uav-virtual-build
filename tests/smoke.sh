@@ -15,7 +15,7 @@ V=${VARIANT:-base}
 import json, sys
 from pathlib import Path
 d = Path(sys.argv[1]); bad = []
-for s in ["ingest", "geometry", "mass", "clash", "aero_lowfi", "propulsion", "structures", "cfd", "flightmodel", "sitl", "report"]:
+for s in ["ingest", "geometry", "mass", "clash", "aero_lowfi", "propulsion", "vtol", "thermal", "balance", "structures", "cfd", "flightmodel", "sitl", "report"]:
     f = d / s / "result.json"
     st = json.loads(f.read_text())["status"] if f.exists() else "missing"
     print(f"  {s:12s} {st}")

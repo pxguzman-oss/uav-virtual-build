@@ -1,0 +1,12 @@
+# Alternative cells the auto-balance stage may propose as battery swaps (same S x P as the plan).
+# Every number here is a STARTING POINT taken from manufacturer datasheets: confirm against the current
+# datasheet before buying. `origin` is where the maker says the cell is produced; `origin_verified: false`
+# means nobody on the team has confirmed it for the lot being bought. Under a restricted sourcing policy
+# (meta.sourcing.policy: us_made | ndaa) only entries whose origin passes the policy are offered.
+cells:
+  - {model: Molicel INR21700-P45B, capacity_Ah: 4.5, r_dc: 0.0105, i_cont: 45, v_nom: 3.6, v_max: 4.2, v_min: 2.5, mass: 0.070,
+     origin: Taiwan, origin_verified: false, source: "Molicel P45B datasheet (verify)"}
+  - {model: Molicel INR21700-P42A, capacity_Ah: 4.2, r_dc: 0.016, i_cont: 45, v_nom: 3.6, v_max: 4.2, v_min: 2.5, mass: 0.070,
+     origin: Taiwan, origin_verified: false, source: "Molicel P42A datasheet (verify)"}
+  - {model: Samsung INR21700-50S, capacity_Ah: 5.0, r_dc: 0.014, i_cont: 25, v_nom: 3.6, v_max: 4.2, v_min: 2.5, mass: 0.072,
+     origin: South Korea, origin_verified: false, source: "Samsung SDI 50S datasheet (verify)"}

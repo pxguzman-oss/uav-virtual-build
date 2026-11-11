@@ -4,7 +4,7 @@
   python run.py plan.yaml [--variant vtol] [--fidelity quick|standard|full]
                 [--only STAGE ...] [--until STAGE] [--force STAGE|all ...] [--out DIR]
 
-Stages (in order): ingest geometry mass clash aero_lowfi propulsion structures cfd flightmodel sitl report
+Stages (in order): ingest geometry mass clash aero_lowfi propulsion vtol thermal balance structures cfd flightmodel sitl report
 Outputs: <out>/<plan>/<variant>/<stage>/result.json (gates[], summary, files) and
          <out>/<plan>/<variant>/report/{index.html, report.md, derived.param, risk_register.csv, ...}
 Exit code: 0 = report GO, 2 = NO-GO (any FAIL/ERROR/BLOCKED), 1 = orchestrator problem.

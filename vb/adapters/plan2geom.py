@@ -161,6 +161,8 @@ def build(plan, render_title=None):
     for c in P.expanded_components(plan):
         cat = c.get("category", "other")
         m_g = c["mass"] * 1000
+        if c.get("cad_part") and af.get("cad_import"):
+            continue                    # its mass and shape live on the imported CAD part of that name (tools/intake.py)
         if cat == "structure_printed" and c.get("geom_part"):
             gp = c["geom_part"]
             if c["name"].endswith("_L") or c["name"].endswith("_mirror"):

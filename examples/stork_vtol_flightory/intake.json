@@ -1,0 +1,403 @@
+{
+ "frame": {
+  "origin_mm": [
+   0.0,
+   5.0,
+   335.0
+  ],
+  "x_aft": "+z",
+  "y_right": "+x",
+  "z_up": "+y"
+ },
+ "frame_suggested": false,
+ "matched": [
+  {
+   "id": "P001",
+   "part": "Fuselage print",
+   "component": "fuselage_print",
+   "bodies": 1,
+   "matched_by": "id P001",
+   "mass_g": 180.0,
+   "x_mm": 152.5,
+   "mirrored": false,
+   "mass_source": "slicer weight 180 g (geometry model would give 271 g)"
+  },
+  {
+   "id": "P002",
+   "part": "Wing print",
+   "component": "wing_print_R",
+   "bodies": 2,
+   "matched_by": "id P002",
+   "mass_g": 308.0,
+   "x_mm": 85.0,
+   "mirrored": true,
+   "mass_source": "slicer weight 154 g (geometry model would give 183 g)"
+  },
+  {
+   "id": "P003",
+   "part": "V-tail print",
+   "component": "vtail_print_R",
+   "bodies": 2,
+   "matched_by": "id P003",
+   "mass_g": 66.0,
+   "x_mm": 530.0,
+   "mirrored": true,
+   "mass_source": "slicer weight 33 g (geometry model would give 31 g)"
+  },
+  {
+   "id": "P004",
+   "part": "Hatch",
+   "component": "hatch_misc",
+   "bodies": 1,
+   "matched_by": "id P004",
+   "mass_g": 15.0,
+   "x_mm": -150.0,
+   "mirrored": false,
+   "mass_source": "slicer weight 15 g (geometry model would give 10 g)"
+  },
+  {
+   "id": "P010",
+   "part": "Main spar 10x1000 carbon tube",
+   "component": "spar_10x8x1000",
+   "bodies": 1,
+   "matched_by": "id P010",
+   "mass_g": 44.0,
+   "x_mm": 57.5,
+   "mirrored": false,
+   "mass_source": "od/id/length x 1550 kg/m3 (1 mm wall assumed)"
+  },
+  {
+   "id": "P011",
+   "part": "Secondary spar 8x1000 carbon tube",
+   "component": "spar_8x6x1000",
+   "bodies": 1,
+   "matched_by": "id P011",
+   "mass_g": 34.0,
+   "x_mm": 120.0,
+   "mirrored": false,
+   "mass_source": "od/id/length x 1550 kg/m3 (1 mm wall assumed)"
+  },
+  {
+   "id": "P012",
+   "part": "Wing spar 6x500 carbon tube",
+   "component": "spar_6x4x500_R",
+   "bodies": 2,
+   "matched_by": "id P012",
+   "mass_g": 24.0,
+   "x_mm": 80.0,
+   "mirrored": true,
+   "mass_source": "od/id/length x 1550 kg/m3 (1 mm wall assumed)"
+  },
+  {
+   "id": "P013",
+   "part": "V-tail spars (8x155 + 6x265 x2 each)",
+   "component": "tail_tubes",
+   "bodies": 1,
+   "matched_by": "id P013",
+   "mass_g": 34.0,
+   "x_mm": 520.0,
+   "mirrored": false,
+   "mass_source": "estimate from tube sizes"
+  },
+  {
+   "id": "P014",
+   "part": "Hinge rods 3 mm",
+   "component": "hinge_rods",
+   "bodies": 0,
+   "matched_by": "no CAD body",
+   "mass_g": 20.0,
+   "x_mm": 240.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P015",
+   "part": "VTOL boom 10x10x500 square carbon",
+   "component": "boom_R",
+   "bodies": 2,
+   "matched_by": "id P015",
+   "mass_g": 56.0,
+   "x_mm": 50.0,
+   "mirrored": true,
+   "mass_source": "estimate from tube size"
+  },
+  {
+   "id": "P020",
+   "part": "Lift motor pod (T-Motor F90 1300KV + 7in prop + mount)",
+   "component": "lift_pod_FR",
+   "bodies": 2,
+   "matched_by": "id P020",
+   "mass_g": 141.2,
+   "x_mm": -200.0,
+   "mirrored": true,
+   "mass_source": "46.6 g motor (T-Motor) + 9 g prop + 15 g mount (estimate)"
+  },
+  {
+   "id": "P020",
+   "part": "Lift motor pod (T-Motor F90 1300KV + 7in prop + mount)",
+   "component": "lift_pod_RR",
+   "bodies": 2,
+   "matched_by": "id P020",
+   "mass_g": 141.2,
+   "x_mm": 300.0,
+   "mirrored": true,
+   "mass_source": "46.6 g motor (T-Motor) + 9 g prop + 15 g mount (estimate)"
+  },
+  {
+   "id": "P021",
+   "part": "Pusher motor BrotherHobby Avenger 2812 V5 910KV",
+   "component": "motor_cruise",
+   "bodies": 1,
+   "matched_by": "id P021",
+   "mass_g": 76.5,
+   "x_mm": 650.0,
+   "mirrored": false,
+   "mass_source": "getfpv listing 76.5 g"
+  },
+  {
+   "id": "P022",
+   "part": "Pusher prop APC 10x6E",
+   "component": "prop_cruise",
+   "bodies": 0,
+   "matched_by": "no CAD body",
+   "mass_g": 20.0,
+   "x_mm": 668.0,
+   "mirrored": false,
+   "mass_source": "APC 10x6E ~20 g"
+  },
+  {
+   "id": "P023",
+   "part": "Pusher ESC Lumenier 51A BLHeli_32",
+   "component": "esc_cruise",
+   "bodies": 1,
+   "matched_by": "id P023",
+   "mass_g": 20.0,
+   "x_mm": 360.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P024",
+   "part": "Lift ESC 4-in-1 Velox V50A",
+   "component": "lift_escs",
+   "bodies": 1,
+   "matched_by": "id P024",
+   "mass_g": 25.0,
+   "x_mm": -100.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P030",
+   "part": "Battery 4S2P Molicel P50B",
+   "component": "battery",
+   "bodies": 1,
+   "matched_by": "id P030",
+   "mass_g": 600.0,
+   "x_mm": -210.0,
+   "mirrored": false,
+   "mass_source": "8 x 69-71 g + nickel/leads"
+  },
+  {
+   "id": "P040",
+   "part": "Flight controller SpeedyBee F405 Wing",
+   "component": "flight_controller",
+   "bodies": 1,
+   "matched_by": "id P040",
+   "mass_g": 35.0,
+   "x_mm": 20.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P041",
+   "part": "GPS Matek M10Q",
+   "component": "gps",
+   "bodies": 1,
+   "matched_by": "id P041",
+   "mass_g": 8.0,
+   "x_mm": 230.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P042",
+   "part": "Receiver Matek R24-D ELRS",
+   "component": "telemetry_rx",
+   "bodies": 1,
+   "matched_by": "id P042",
+   "mass_g": 3.0,
+   "x_mm": 110.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P043",
+   "part": "Video transmitter Walksnail Avatar VTX",
+   "component": "vtx",
+   "bodies": 1,
+   "matched_by": "id P043",
+   "mass_g": 30.0,
+   "x_mm": 140.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P044",
+   "part": "FPV camera Walksnail",
+   "component": "camera",
+   "bodies": 1,
+   "matched_by": "id P044",
+   "mass_g": 10.0,
+   "x_mm": -310.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P050",
+   "part": "Aileron servo EMAX ES08MA II",
+   "component": "servo_aileron",
+   "bodies": 2,
+   "matched_by": "id P050",
+   "mass_g": 24.0,
+   "x_mm": 58.0,
+   "mirrored": true,
+   "mass_source": "EMAX datasheet 12 g"
+  },
+  {
+   "id": "P051",
+   "part": "Ruddervator servo EMAX ES08MA II",
+   "component": "servo_ruddervator",
+   "bodies": 2,
+   "matched_by": "id P051",
+   "mass_g": 24.0,
+   "x_mm": 420.0,
+   "mirrored": true,
+   "mass_source": "EMAX datasheet 12 g"
+  },
+  {
+   "id": "P060",
+   "part": "Wiring harness",
+   "component": "wiring",
+   "bodies": 0,
+   "matched_by": "no CAD body",
+   "mass_g": 50.0,
+   "x_mm": 80.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P061",
+   "part": "Lift motor wiring",
+   "component": "lift_wiring",
+   "bodies": 0,
+   "matched_by": "no CAD body",
+   "mass_g": 45.0,
+   "x_mm": 50.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  },
+  {
+   "id": "P062",
+   "part": "Hardware (inserts, screws, horns, pushrods, glue)",
+   "component": "hardware",
+   "bodies": 0,
+   "matched_by": "no CAD body",
+   "mass_g": 40.0,
+   "x_mm": 60.0,
+   "mirrored": false,
+   "mass_source": "estimate"
+  }
+ ],
+ "questions": [],
+ "cad_map": {
+  "fuselage_print": [
+   "P001_Fuselage print v3:1"
+  ],
+  "wing_print_R": [
+   "P002_Wing print v3:1",
+   "P002_Wing print v3:2"
+  ],
+  "vtail_print_R": [
+   "P003_V-tail print v3:1",
+   "P003_V-tail print v3:2"
+  ],
+  "hatch_misc": [
+   "P004_Hatch v3:1"
+  ],
+  "spar_10x8x1000": [
+   "P010_Main spar v3:1"
+  ],
+  "spar_8x6x1000": [
+   "P011_Secondary spar v3:1"
+  ],
+  "spar_6x4x500_R": [
+   "P012_Wing spar 6x500 v3:1",
+   "P012_Wing spar 6x500 v3:2"
+  ],
+  "tail_tubes": [
+   "P013_V-tail spars v3:1"
+  ],
+  "boom_R": [
+   "P015_VTOL boom v3:1",
+   "P015_VTOL boom v3:2"
+  ],
+  "lift_pod_FR": [
+   "P020_Lift motor pod v3:1",
+   "P020_Lift motor pod v3:2"
+  ],
+  "lift_pod_RR": [
+   "P020_Lift motor pod v3:3",
+   "P020_Lift motor pod v3:4"
+  ],
+  "motor_cruise": [
+   "P021_Pusher motor v3:1"
+  ],
+  "esc_cruise": [
+   "P023_Pusher ESC v3:1"
+  ],
+  "lift_escs": [
+   "P024_Lift ESC 4in1 v3:1"
+  ],
+  "battery": [
+   "P030_Battery 4S2P v3:1"
+  ],
+  "flight_controller": [
+   "P040_Flight controller v3:1"
+  ],
+  "gps": [
+   "P041_GPS v3:1"
+  ],
+  "telemetry_rx": [
+   "P042_Receiver v3:1"
+  ],
+  "vtx": [
+   "P043_Video transmitter v3:1"
+  ],
+  "camera": [
+   "P044_FPV camera v3:1"
+  ],
+  "servo_aileron": [
+   "P050_Aileron servo v3:1",
+   "P050_Aileron servo v3:2"
+  ],
+  "servo_ruddervator": [
+   "P051_Ruddervator servo v3:1",
+   "P051_Ruddervator servo v3:2"
+  ]
+ },
+ "unmatched_bodies": [],
+ "totals": {
+  "mass_g": 2073.9,
+  "cg_mm": [
+   48.3,
+   0.0,
+   12.7
+  ]
+ },
+ "plan": "examples/stork_vtol_flightory/stork_vtol_flightory.buildplan.yaml",
+ "cad": [
+  "examples/stork_vtol_flightory/stork_vtol_assembly.step"
+ ],
+ "parts": "examples/stork_vtol_flightory/parts_list.csv"
+}

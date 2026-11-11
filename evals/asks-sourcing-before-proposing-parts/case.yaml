@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: asks-sourcing-before-proposing-parts
+expected_outcome: |
+  Before proposing any replacement part, the assistant asks whether any part is allowed or only US-made parts, because the user has not said.

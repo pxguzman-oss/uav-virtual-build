@@ -1,0 +1,14 @@
+# Values the CAD and the parts list cannot give: merged into the base plan by tools/intake.py --merge.
+# ESC ratings are the current numbers in the product names of the Flightory VTOL list; r_on stays the plan estimate.
+avionics:
+  autopilot: {board: SpeedyBee F405 Wing}
+  avionics_power_W: 12.0          # sum of the power_w column (FC 2.5, GPS 0.3, RX 0.5, VTX 8, camera 0.7): estimates, measure
+propulsion:
+  units:
+    - {name: cruise, esc: {model: "Lumenier 51A BLHeli_32", i_cont: 51, i_burst: 60, r_on: 0.004}}
+    - {name: lift, esc: {model: "T-Motor Velox V50A 4in1", i_cont: 50, r_on: 0.004}}
+# Operating envelope for canal inspection in Texas. ASSUMED defaults (the team has not given numbers yet):
+# confirm or replace. Gulf coast / Rio Grande Valley = hot and humid near sea level; West Texas = hot, high, windy.
+environment_cases:
+  - {name: texas_gulf_summer, altitude_msl: 30, temperature_C: 40, solar_heating_dT_C: {value: 20, source: "assumption: printed skin parked in full sun", range: [10, 30]}, wind_mean: 8, wind_gust: 13, turbulence: moderate}
+  - {name: west_texas_summer, altitude_msl: 1200, temperature_C: 45, solar_heating_dT_C: {value: 20, source: "assumption: printed skin parked in full sun", range: [10, 30]}, wind_mean: 10, wind_gust: 15, turbulence: moderate}
