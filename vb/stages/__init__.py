@@ -51,6 +51,20 @@ STAGES = [
          keys=["/"], code=["vb/stages/report.py"]),
 ]
 
+# The three questions a design has to answer, cheapest first. A stage belongs to the phase whose question it
+# answers; execution order stays the list order above (balance runs late only because it can use the aero and
+# hover numbers when they exist).
+PHASES = [
+    dict(name="layout", question="Does it add up?", stages=["ingest", "geometry", "mass", "clash", "balance"],
+         blurb="plan valid, parts fit, weight and CG on target, a balanced layout exists"),
+    dict(name="sizing", question="Does it work on paper?", stages=["aero_lowfi", "propulsion", "vtol", "thermal", "structures"],
+         blurb="stall and stability, thrust and energy, hover margins, temperatures, loads"),
+    dict(name="flight", question="Does it fly in simulation?", stages=["cfd", "flightmodel", "sitl"],
+         blurb="CFD cross-check, flight model and ArduPilot parameters, simulated missions and failsafes"),
+]
+PHASE_OF = {s: p["name"] for p in PHASES for s in p["stages"]}
+DESK = [s for p in PHASES[:2] for s in p["stages"]] + ["flightmodel", "report"]      # everything that takes seconds
+
 BY_NAME = {s["name"]: s for s in STAGES}
 NAMES = [s["name"] for s in STAGES]
 

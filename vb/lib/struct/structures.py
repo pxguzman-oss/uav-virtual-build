@@ -187,7 +187,8 @@ def run(plan, variant, out_dir, prop=None, M_auw=None, aero=None):
     load_cases["belly landing (no lift, inertia)"] = (0.0, n_land, ())
     if prop.get("vtol", {}).get("hover_table") and plan["airframe"].get("booms"):
         rows = prop["vtol"]["hover_table"]
-        T_max = max(r["wot_thrust_g"] for r in rows) / 1000 * G       # per motor
+        # per motor. Rows of AUW cases that cannot hover carry only TW_max (4 motors): thrust = TW_max x weight / 4
+        T_max = max(r["wot_thrust_g"] / 1000 * G if "wot_thrust_g" in r else r["TW_max"] * r["auw_kg"] * G / 4 for r in rows)
         y_boom = plan["airframe"]["booms"][0]["root"][1]
         n_q = 4 * T_max / W
         load_cases[f"VTOL all-motors WOT (T/W {n_q:.2f})"] = (0.0, n_q, ((y_boom, 2 * T_max),))

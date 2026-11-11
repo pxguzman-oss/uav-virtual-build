@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: entry-design-change-rebalance
+expected_outcome: |
+  The design is found nose heavy by about 34 mm. The design loop proves several options and the answer compares them with proven numbers, recommends one, and hands back a change list and a moved STEP. No CFD or flight simulation is run on the unbalanced layout.

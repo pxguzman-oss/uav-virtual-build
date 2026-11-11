@@ -2,7 +2,14 @@
 """Virtual build of a small 3D-printed UAV from ONE build-plan YAML.
 
   python run.py plan.yaml [--variant vtol] [--fidelity quick|standard|full]
-                [--only STAGE ...] [--until STAGE] [--force STAGE|all ...] [--out DIR]
+                [--phase layout|desk|flight] [--only STAGE ...] [--until STAGE] [--force STAGE|all ...] [--out DIR]
+
+Phases (the three questions, cheapest first):
+  layout  Does it add up?             ingest geometry mass clash balance                 seconds
+  sizing  Does it work on paper?      aero_lowfi propulsion vtol thermal structures      ~1 min
+  flight  Does it fly in simulation?  cfd flightmodel sitl                               minutes to hours
+--phase layout runs the layout stages; --phase desk runs layout + sizing (+ flight model and report, no CFD or
+SITL); --phase flight (the default) runs everything. tools/design_loop.py drives the whole loop.
 
 Stages (in order): ingest geometry mass clash aero_lowfi propulsion vtol thermal balance structures cfd flightmodel sitl report
 Outputs: <out>/<plan>/<variant>/<stage>/result.json (gates[], summary, files) and
@@ -42,7 +49,7 @@ def _ensure_env():
 _ensure_env()
 
 from vb.dag import Runner  # noqa: E402
-from vb.stages import NAMES  # noqa: E402
+from vb.stages import NAMES, PHASES, DESK  # noqa: E402
 
 
 def main(argv=None):
@@ -50,6 +57,8 @@ def main(argv=None):
     ap.add_argument("plan")
     ap.add_argument("--variant", default=None, help="variant name from plan.variants (default: base)")
     ap.add_argument("--fidelity", default="standard", choices=["quick", "standard", "full"])
+    ap.add_argument("--phase", choices=["layout", "desk", "flight"], default=None,
+                    help="layout: seconds; desk: layout + sizing, no CFD/SITL; flight: everything (default)")
     ap.add_argument("--only", nargs="+", choices=NAMES, help="run only these stages (upstream results must exist)")
     ap.add_argument("--until", choices=NAMES, help="run this stage and everything it depends on")
     ap.add_argument("--force", nargs="+", default=[], choices=NAMES + ["all"],
@@ -59,6 +68,8 @@ def main(argv=None):
     ap.add_argument("--calibration", default=None,
                     help="calibration YAML (measured overrides + measured values) -> <variant>_calibrated run + predicted-vs-measured table")
     a = ap.parse_args(argv)
+    if a.phase in ("layout", "desk") and not a.only:
+        a.only = [n for n in NAMES if n in (DESK if a.phase == "desk" else PHASES[0]["stages"] + ["report"])]
     r = Runner(a.plan, a.variant, a.fidelity, a.out, a.force, a.only, a.until, a.quiet, a.calibration)
     r.run()
     rep = r.run_dir / "report" / "result.json"

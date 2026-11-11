@@ -25,6 +25,38 @@ sys.path.insert(0, str(ROOT))
 from vb import plan as P  # noqa: E402
 
 
+def add_variants(plan_path, src, ids=None, backup=True):
+    """Add balance options as plan variants. ids=None -> every option that reaches the target. Returns
+    [(option id, variant name, title)]. The plan file is rewritten (variants only)."""
+    src, plan_p = Path(src), Path(plan_path)
+    bo = json.loads((src / "balance_options.json").read_text())
+    by_id = {o["id"]: o for o in bo["options"]}
+    ids = [o["id"] for o in bo["options"] if o["feasible"] and o["id"] != "0"] if ids is None else list(ids)
+    raw = P.load_raw(plan_p)
+    sv = bo.get("source_variant") or "base"
+    added = []
+    for i in ids:
+        ovf = src / "options" / f"{i}.overlay.yaml"
+        if not ovf.exists():
+            raise SystemExit(f"option {i} has no overlay in {src / 'options'}")
+        name = (f"{sv}_bal{i}" if sv != "base" else f"bal{i}")
+        raw.setdefault("variants", {})[name] = yaml.safe_load(ovf.read_text())
+        added.append((i, name, by_id[i]["title"]))
+    errs = []
+    for _, n, _ in added:
+        try:
+            errs += [f"{n}: {e}" for e in P.validate(P.resolve(raw, n))]
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"{n}: {e}")
+    if errs:
+        raise SystemExit("option variants do not validate:\n  " + "\n  ".join(errs[:10]))
+    if backup:
+        shutil.copy(plan_p, plan_p.with_suffix(plan_p.suffix + ".bak"))
+    head = "".join(l for l in plan_p.read_text().splitlines(True)[:40] if l.startswith("#"))
+    plan_p.write_text(head + yaml.safe_dump(json.loads(json.dumps(raw)), sort_keys=False, width=160))
+    return added
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("plan")
@@ -36,33 +68,13 @@ def main(argv=None):
     a = ap.parse_args(argv)
     src = Path(a.src)
     bo = json.loads((src / "balance_options.json").read_text())
-    ids = [o["id"] for o in bo["options"] if o["feasible"] and o["id"] != "0"] if a.all else a.option
-    if not ids:
+    if not a.all and not a.option:
         sys.exit("no option selected (use --option ID or --all)")
     plan_p = Path(a.plan)
-    raw = P.load_raw(plan_p)
-    sv = bo.get("source_variant") or "base"
-    added = []
-    for i in ids:
-        ovf = src / "options" / f"{i}.overlay.yaml"
-        if not ovf.exists():
-            sys.exit(f"option {i} has no overlay in {src / 'options'}")
-        name = (f"{sv}_bal{i}" if sv != "base" else f"bal{i}")
-        raw.setdefault("variants", {})[name] = yaml.safe_load(ovf.read_text())
-        added.append(name)
-    errs = []
-    for n in added:
-        try:
-            errs += [f"{n}: {e}" for e in P.validate(P.resolve(raw, n))]
-        except Exception as e:  # noqa: BLE001
-            errs.append(f"{n}: {e}")
-    if errs:
-        sys.exit("option variants do not validate:\n  " + "\n  ".join(errs[:10]))
-    shutil.copy(plan_p, plan_p.with_suffix(plan_p.suffix + ".bak"))
-    head = "".join(l for l in plan_p.read_text().splitlines(True)[:40] if l.startswith("#"))
-    plan_p.write_text(head + yaml.safe_dump(json.loads(json.dumps(raw)), sort_keys=False, width=160))
-    print("variants added:", ", ".join(added))
-    for n in added:
+    added = add_variants(plan_p, src, None if a.all else a.option)
+    ids = [i for i, _, _ in added]
+    print("variants added:", ", ".join(n for _, n, _ in added))
+    for _, n, _ in added:
         print(f"  python run.py {plan_p} --variant {n}")
 
     if a.step_out:

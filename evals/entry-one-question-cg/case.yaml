@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: entry-one-question-cg
+expected_outcome: |
+  Only the cheap layout or desk phase is run. The answer gives the CG against the design CG in one or two sentences and mentions briefly that other findings exist, without running CFD or flight simulation.

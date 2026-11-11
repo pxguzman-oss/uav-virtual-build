@@ -25,29 +25,45 @@ If `python` lacks the packages, run.py re-executes itself with the project venv,
 
 
 
-NEW: CAD + PARTS LIST IN, BALANCE OPTIONS OUT
----------------------------------------------
+THE DESIGN LOOP: CAD + PARTS LIST IN, A PROVEN BALANCED DESIGN OUT
+-------------------------------------------------------------------
     python tools/intake.py --cad assembly.step --parts parts.csv --base BASE.yaml --frame "..." --policy any --out work/x
-    python run.py work/x/<name>.buildplan.yaml
-    python tools/balance_apply.py work/x/<name>.buildplan.yaml --from out/<name>/base/balance --option B
-    python run.py work/x/<name>.buildplan.yaml --variant balB
+    python tools/design_loop.py work/x/<name>.buildplan.yaml              # desk check + prove the balance options (minutes)
+    python tools/design_loop.py work/x/<name>.buildplan.yaml --fly balA   # CFD + SITL on the chosen candidate
+    python tools/balance_apply.py work/x/<name>.buildplan.yaml --from out/<name>/base/balance --option A \
+           --step-out balanced_A.step --cad-map work/x/cad_map.json       # moved CAD for Fusion
+
+The three questions, cheapest first (python run.py PLAN --phase layout | desk | flight):
+  1 layout  Does it add up?             ingest geometry mass clash balance                seconds
+  2 sizing  Does it work on paper?      aero_lowfi propulsion vtol thermal structures     ~1 min
+  3 flight  Does it fly in simulation?  cfd flightmodel sitl                              30 min to hours
 
   tools/intake.py         Fusion STEP assembly + parts list (CSV/XLSX) + base plan -> build plan, with a QUESTIONS
                           list for anything uncertain (unmatched bodies, missing masses, guessed frame)
+  tools/design_loop.py    desk-checks the design, turns the best balance options into variants, desk-checks each,
+                          writes out/<plan>/design_loop/DECISION.md (proven numbers side by side, what each option
+                          fixes and newly breaks, what stays open); --fly runs CFD + SITL on one candidate and
+                          refuses a layout that still fails
+  stage balance           ranked ways to put the CG on target and the lift-thrust centre on the CG, each with pros,
+                          cons, a Fusion change list and a variant overlay
   stage vtol              quadplane: per-motor hover load from the real CG, thrust margin in thin air, roll/pitch/yaw
                           authority, crosswind hover, transition, one lift motor out
   stage thermal           lumped thermal network over the mission (hot and cold case, nominal and pessimistic),
                           print softening temperature, vent sizing, parts to instrument
-  stage balance           ranked ways to put the CG on target and the lift-thrust centre on the CG, each with pros,
-                          cons, a Fusion change list and a variant overlay
-  tools/balance_apply.py  turns an option into a plan variant to re-run, and writes the re-positioned STEP
+  report                  opens with the three questions and "What to do next": every FAIL and WARN grouped by who
+                          acts (CAD, print material, bought part, setting, operating limit, measurement)
+  tools/balance_apply.py  adds one option as a variant by hand, and writes the re-positioned STEP
   sourcing policy         meta.sourcing.policy: any | us_made | ndaa screens the parts list and the proposed swaps
   approval gate           derived.param is released into the report only when meta.approval.design_approved is true
                           and the run is GO / CONDITIONAL GO
 
-Workflow, parts-list columns and Fusion export rules: docs/CAD_TO_SIM.md. Windows desktop (WSL2) setup:
-docs/DESKTOP_SETUP.md. Worked example: examples/stork_vtol_flightory/. Tests that need no CFD or SITL:
-    .venv/bin/python tests/test_cad_balance_thermal.py
+Docs: docs/CAD_TO_SIM.md (workflow, parts-list columns, Fusion export rules), docs/DESKTOP_SETUP.md (Windows + WSL2),
+docs/skill/ (step-by-step playbooks the Claude skill follows). Worked example: examples/stork_vtol_flightory/.
+
+Tests, cheapest first (stop at the first failing tier):
+    bash tests/run_tests.sh fast     # seconds: arithmetic and file handling
+    bash tests/run_tests.sh desk     # ~4 min: intake -> design loop on the Stork against known numbers
+    bash tests/run_tests.sh smoke    # ~4 min: whole pipeline at quick fidelity with a simulated flight
 
 Stage order: ingest geometry mass clash aero_lowfi propulsion vtol thermal balance structures cfd flightmodel sitl report
 

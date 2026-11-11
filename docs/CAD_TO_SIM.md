@@ -5,19 +5,25 @@ printing, whether the aircraft balances, hovers, transitions, cruises, stays coo
 
 ```
 Fusion assembly (STEP) + parts list (CSV/XLSX) + base plan
-        |  tools/intake.py                      names matched, masses and CGs computed, questions listed
+        |  tools/intake.py                 names matched, masses and CGs computed, questions listed
         v
-   build plan (YAML)  ->  python run.py PLAN    ingest, geometry, mass, clash, aero, propulsion, vtol,
-        |                                       thermal, balance, structures, CFD, flight model, SITL, report
+   build plan (YAML)
+        |  tools/design_loop.py            1 LAYOUT  does it add up?         (seconds)
+        |                                  2 SIZING  does it work on paper?  (~1 min)
+        |                                  every promising balance option is added as a variant and desk-checked
         v
-   balance options (ranked, pros/cons, change list)      out/<plan>/<variant>/balance/
-        |  tools/balance_apply.py --option X    option becomes a plan variant (+ re-positioned STEP)
+   DECISION.md: candidates side by side with proven numbers, what each fixes and breaks, what stays open
+        |  the team picks a candidate
         v
-   python run.py PLAN --variant <...>_balX      the option is proven (or not) by the whole pipeline
-        |  team approves a balanced design      meta.approval.design_approved: true
+   tools/design_loop.py --fly <variant>    3 FLIGHT  does it fly in simulation?  CFD + ArduPilot SITL (30 min to hours)
+        |  tools/balance_apply.py --step-out    moved CAD back into Fusion
+        |  team approves                         meta.approval.design_approved: true
         v
    report with the ArduPilot parameter file released
 ```
+
+The order matters: a layout that does not balance changes every number after it, so the loop settles balance
+with one-minute desk checks and spends CFD and flight simulation only on the candidate the team chose.
 
 ## 1. What to export from Fusion
 
@@ -90,9 +96,10 @@ Each option reports CG error, static margin, CG-to-thrust-centre offset, AUW cha
 pros, cons and a change list (`fusion_change_list.csv`: item, CAD body, from, to, delta, why). The ranking is
 a heuristic (effort + range cost + what is left unsolved): the team chooses.
 
-`python tools/balance_apply.py PLAN --from out/<plan>/<variant>/balance --option B` adds the option to the
-plan as variant `<variant>_balB`; `python run.py PLAN --variant <variant>_balB` then proves it through every
-stage. With `--step-out file.step --cad-map <intake>/cad_map.json` it also writes the assembly with the moved
+`python tools/design_loop.py PLAN` proves the best options automatically: each becomes a plan variant
+(`<variant>_balB`), is desk-checked, and lands in `out/<plan>/design_loop/DECISION.md` next to the others.
+`python tools/balance_apply.py PLAN --from out/<plan>/<variant>/balance --option B` does the same for one
+option by hand. With `--step-out file.step --cad-map <intake>/cad_map.json` it also writes the assembly with the moved
 bodies, to import back into Fusion. Frame changes are not applied to the STEP; they are in the change list.
 
 ## 4. What the vtol and thermal stages add

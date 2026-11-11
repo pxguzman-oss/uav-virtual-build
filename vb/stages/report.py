@@ -32,6 +32,20 @@ VERIFY = {"mass": "C0 weigh every part + balance-point check", "geometry": "comp
           "thermal": "thermocouples or IR thermometer on the flagged parts after a hover and after a ground soak in the sun",
           "balance": "C0 balance-point check of the built aircraft"}
 MITIGATION = [
+    (r"softening|hotter than the print can touch", "Print the skins and trays in LW-ASA / ASA / PETG instead of LW-PLA, keep hot parts off the print (standoffs, PETG tray), paint top skins white, shade the aircraft on the ground."),
+    (r"peak temperature", "Give the part airflow or a heat sink, or move it out of the closed bay; add a bay vent (analysis.thermal.vents) for forward flight. Measure its real power draw first."),
+    (r"motor mount temperature", "Print motor mounts in PETG / ASA / nylon, not LW-PLA; add a standoff or an aluminium plate under the motor."),
+    (r"continuous hover before", "Shorten the planned hover, add cells in parallel or heat-sink the lift ESC into the prop wash."),
+    (r"battery temperature at take-off", "Keep the pack warm until launch (insulated box, hand warmers); expect less hover margin when cold."),
+    (r"lift T/W in the thinnest air|hover ESC duty in", "More lift thrust (larger props or motors, one more cell in series), less weight, or restrict operations to cooler / lower sites and land with more battery left."),
+    (r"lift-thrust centre|most-loaded lift motor", "Balance the aircraft on the lift motors: apply a balance option, or move the booms so the motors straddle the CG."),
+    (r"hover (roll|pitch|yaw) authority", "More thrust headroom (see lift T/W); for yaw, tilt the lift motors 2-4 deg alternately or enlarge the motor arm; set the Q_A_ACCEL limits from the vtol stage."),
+    (r"crosswind|tilt to hold", "Operating limit: set a maximum wind for hover, take off and land nose into wind, enable Q_WVANE_ENABLE."),
+    (r"one lift motor failed", "Operating limit: keep hover low and short; brief the fly-away-on-the-wing procedure; consider 8 lift motors for flights over people or water."),
+    (r"transition time|during transition", "Raise analysis.vtol.transition_s to the simulated time, or add pusher thrust; check the battery current limit."),
+    (r"as drawn: CG|balanced layout exists|reaches the CG window", "Pick a balance option (balance stage), prove it with tools/design_loop.py and apply it in CAD."),
+    (r"sourcing policy|stated origin|no origin|not verified", "Ask the user for the sourcing policy; replace or verify the listed parts and record origin on the parts list."),
+    (r"AIRSPEED_MIN", "Raise AIRSPEED_MIN to at least 1.2 x the pessimistic stall speed (and re-check the cruise speed and range)."),
     (r"Tg", "Print skins and spar sockets in LW-ASA/ASA/PETG, or paint the top skins white and keep the aircraft shaded; re-run with the new material card."),
     (r"CG x vs design", "Move the battery (see mass stage shift) or add nose/tail ballast; mark the balanced battery position in the bay."),
     (r"battery travel", "Battery cannot reach the CG target: move other items or add ballast."),
@@ -49,7 +63,7 @@ MITIGATION = [
     (r"static margin|Cm_alpha", "Move the CG or resize the tail; re-run aero."),
     (r"spiral", "More dihedral or vertical tail; the autopilot copes if the time to double >= 12 s."),
     (r"Dutch", "More vertical-tail area / yaw damper (KFF_RDDRMIX, YAW2SRV_DAMP)."),
-    (r"VTOL T/W|hover duty", "Bigger lift motors/props, higher voltage or lower AUW; set Q_M_BAT_CURR_MAX."),
+    (r"VTOL T/W|hover.*duty|hover throttle", "Bigger lift motors/props, higher voltage or lower AUW; set Q_M_BAT_CURR_MAX."),
     (r"per-cell current", "Higher-rate cells / more parallel strings, or current-limit (Q_M_BAT_CURR_MAX)."),
     (r"cell temperature", "Limit hover time; log pack temperature; consider more cells in parallel."),
     (r"share of AUW", "Weigh all parts (calibration C0) and update the plan masses."),
@@ -220,6 +234,27 @@ def verification(stage, check):
         if re.search(pat, check, re.I):
             return txt
     return VERIFY.get(stage, "review")
+
+
+ACTION_KINDS = [("cad", "Change in CAD (layout, structure, cooling)"), ("material", "Change the print material or process"),
+                ("part", "Change or add a bought part"), ("setting", "Change a setting (plan or ArduPilot)"),
+                ("ops", "Operating limit to write into the flight procedure"), ("measure", "Measure or test to retire the risk")]
+ACTION_RULES = [
+    (r"softening|Tg|hotter than the print|motor mount temperature", "material"),
+    (r"share of AUW|plan mass|estimated|not verified|no origin|CFD .*model|lift slope|point-mass model|inertia", "measure"),
+    (r"crosswind|tilt to hold|one lift motor failed|battery temperature at take-off|landing position|spiral|survives the throw|after release", "ops"),
+    (r"AIRSPEED|THR_MAX|max level speed|transition time|cross-track|full-throttle|ArduPilot params|hover throttle|gust load factor|WOT time|schema|YAML|sourcing policy set", "setting"),
+    (r"T/W|ESC|per-cell|AWG|servo stall|energy|stated origin|hover ESC duty|motor loss|connector|authority", "part"),
+]
+STAGE_KIND = dict(ingest="setting", geometry="cad", mass="cad", clash="cad", balance="cad", aero_lowfi="cad", propulsion="part", vtol="part",
+                  thermal="cad", structures="cad", cfd="measure", flightmodel="setting", sitl="setting")
+
+
+def action_kind(stage, check):
+    for pat, kind in ACTION_RULES:
+        if re.search(pat, check, re.I):
+            return kind
+    return STAGE_KIND.get(stage, "measure")
 
 
 def mitigation(check):
@@ -525,6 +560,47 @@ def run(ctx):
     if key_rows:
         D.h(2, "Headline numbers (with uncertainty)", "headline")
         D.table(["quantity", "value", "basis"], key_rows)
+    # ---- the three questions, then what to do next --------------------------------------------------
+    from ..stages import PHASES
+    phase_rows, phase_data, blocked_by = [], [], None
+    for ph in PHASES:
+        gs = [(st_, g) for st_ in ph["stages"] if R.get(st_) for g in R[st_].get("gates", [])]
+        nf = sum(g["status"] in ("FAIL", "ERROR") for _, g in gs)
+        nw = sum(g["status"] == "WARN" for _, g in gs)
+        missing = [st_ for st_ in ph["stages"] if not R.get(st_) or (R[st_].get("status") != "ok" and not (R[st_].get("summary") or {}).get("not_applicable"))]
+        status = "FAIL" if nf else ("NOT RUN" if missing else ("WARN" if nw else "PASS"))
+        note = (f"not run: {', '.join(missing)}" if missing else "") if not nf else next(g["check"] for _, g in gs if g["status"] in ("FAIL", "ERROR"))[:110]
+        if nf and missing:
+            note += f" (not run: {', '.join(missing)})"
+        if blocked_by and status != "NOT RUN":
+            note = (f"read with care: '{blocked_by}' is not settled yet. " + note).strip()
+        if status == "FAIL" and not blocked_by:
+            blocked_by = ph["name"]
+        phase_rows.append([f"{len(phase_rows)+1} {ph['name']}: {ph['question']}", status, nf, nw, ph["blurb"], note])
+        phase_data.append(dict(phase=ph["name"], status=status, fails=nf, warns=nw, missing=missing))
+    D.h(2, "The three questions", "phases")
+    D.table(["phase", "status", "FAIL", "WARN", "what it covers", "first thing to fix"], phase_rows, status_col=1)
+    D.p("Work them in order. A layout that does not balance or fit changes every number after it, so fix phase 1 before spending "
+        "time on phase 2 findings, and prove a design in phase 3 only once phases 1 and 2 have no FAIL you are not prepared to accept.")
+    plan_rows = {k: [] for k, _ in ACTION_KINDS}
+    for s_, g in sorted(bad_gates, key=lambda x: (x[1]["status"] != "FAIL", NAMES.index(x[0]) if x[0] in NAMES else 99)):
+        if g["status"] in ("FAIL", "WARN"):
+            plan_rows[action_kind(s_, g["check"])].append((s_, g))
+    D.h(2, "What to do next", "actions")
+    D.p("Every FAIL and WARN, grouped by who has to act. FAILs first; within a group, earlier phases first.")
+    action_data = []
+    for k, label in ACTION_KINDS:
+        if not plan_rows[k]:
+            continue
+        nf_ = sum(g["status"] == "FAIL" for _, g in plan_rows[k])
+        D.h(3, f"{label}: {nf_} FAIL, {len(plan_rows[k]) - nf_} WARN")
+        D.table(["status", "finding", "value vs limit", "what to do"],
+                [[g["status"], f"{g['check'][:120]} ({s_})", f"{fmt(g['value'])} vs {fmt(g['limit'])}", mitigation(g["check"])]
+                 for s_, g in plan_rows[k][:14]], status_col=0)
+        if len(plan_rows[k]) > 14:
+            D.p(f"... and {len(plan_rows[k]) - 14} more WARNs of this kind in the stage sections and the risk register.")
+        action_data += [dict(kind=k, stage=s_, status=g["status"], check=g["check"], value=g["value"], limit=g["limit"],
+                             action=mitigation(g["check"])) for s_, g in plan_rows[k]]
     D.h(2, "GO / NO-GO by stage", "gonogo")
     D.table(["stage", "verdict", "FAIL", "WARN", "top issue"], rows, status_col=1)
     D.h(3, "Provenance of every stage result")
@@ -768,5 +844,6 @@ def run(ctx):
     summ = dict(overall=verdict_text, fails=n_fail, warns=n_warn, errors=n_err, stale=len(stale), risks=len(risks), soft_inputs=len(soft),
                 html_MB=round((out / "index.html").stat().st_size / 1e6, 2))
     return dict(summary=summ, data=dict(overall=verdict_text, fails=n_fail, warns=n_warn, errors=n_err, stale=stale, stage_rows=rows, problems=problems + reasons,
+                                        phases=phase_data, actions=action_data,
                                         top_fail=[f"{s}: {g['check']}" for s, g in fails][:10],
                                         top_warn=[f"{s}: {g['check']}" for s, g in bad_gates if g["status"] == "WARN"][:10]))
