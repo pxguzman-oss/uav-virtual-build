@@ -11,7 +11,7 @@ The work is done by the **vbuild** pipeline, a code repo. This file says how to 
 
 ## 0. Get the pipeline
 
-1. Look for an existing checkout: `~/uav-virtual-build`, `/home/claude/uav-virtual-build`, or the session's repos. If none exists:
+1. Look for an existing checkout: `~/uav-virtual-build`, `/home/claude/uav-virtual-build`, `/home/claude/vbuild`, or the session's repos. If none exists:
    - Attach the private repo with `add_repo` (owner `pxguzman-oss`, repo `uav-virtual-build`, access `read`, or `push` to commit fixes), then clone it to `~/uav-virtual-build`.
    - If the repo can't be reached, tell the user and ask for the repo or a tarball. Don't rewrite the pipeline from memory.
 2. `bash setup/install.sh` (idempotent, Ubuntu 24.04; ~40 min on 2 cores, ~15-20 min on the team's 12-core desktop, mostly the ArduPilot SITL build). Run it in the background with a log and poll, because containers can restart. It installs one venv, Blender with xvfb, OpenFOAM v1912 plus the bundled sha1 shim, CalculiX, AVL, xfoil-python, JSBSim, OpenCascade (`cadquery-ocp`, for STEP) and ArduPilot Plane-4.7.2.
@@ -42,6 +42,8 @@ python tools/intake.py --cad assembly.step --parts parts.csv --base BASE_PLAN.ya
 - The intake exits 2 with a **QUESTIONS** list (unmatched bodies, rows with no mass or position, quantity mismatches, a guessed frame, CAD dimensions that disagree with the base plan). Take every question to the user; do not paper over one with an assumption.
 - Every uncertain number is `{value, source: "estimate ...", uncertainty}`. Never bury an assumption in a comment: the soft-input table and the corner cases only see explicit fields.
 - Frame: origin at the wing-root leading edge on the centreline; x aft, y right, z up; SI units. A component `position` is its own CG. Write YAML exponents as `1.2e+11`.
+- Wing-mounted pairs are one component with `mirror_y` (the intake does this for mirrored bodies). Variants (VTOL, payloads, battery options, balance options) are overlays under `variants:`, so every variant shares the base airframe numbers.
+- Only a print STL pack and no assembly? Use `airframe.cad_import` (see the `stl_demo` variant): a mapping of part -> transform, material, wall thickness and infill. Manufacturer files are usually laid out for printing, so set transforms or `center_at`; open seams are closed automatically and reported. With a STEP assembly, `tools/intake.py --cad-import` writes this mapping for you.
 - Validate fast: `python run.py PLAN --until mass --fidelity quick`, and fix every ingest FAIL before going further.
 
 No CAD yet (paper design)? Fill the plan by hand from the manual and the parts list as before; everything below still applies.
@@ -124,10 +126,14 @@ Ask for measurements in this order: C0 part weights, AUW and measured CG; C2 thr
 
 ## Known pitfalls (handled in the code; recheck if tools change)
 
-- **OpenFOAM v1912 (apt):** function objects crash without the sha1 LD_PRELOAD shim; scotch is a stub (hierarchical decomposition); set `analysis.cfd.np` to the physical core count on big machines.
+- **OpenFOAM v1912 (apt):** function objects crash without the sha1 LD_PRELOAD shim; scotch is a stub (hierarchical decomposition); the tutorials are empty; set `analysis.cfd.np` to the physical core count on big machines.
 - **Steady RANS limits:** fully turbulent RANS over-predicts drag on low-Re laminar sections by ~50 %. Use CFD for lift slope, Cm, interference and non-wing drag increments, not absolute wing drag or CLmax.
-- **xfoil / NeuralFoil / AVL:** use xfoil-python (the apt binary can't run headless); deflect the geometry instead of NeuralFoil's flap model; Cm_alpha comes from AVL; AVL truncates paths over 80 characters.
-- **ArduPilot SITL:** needs `empy==3.3.4`; only the JSBSim bridge gives usable numbers. A hand launch under ~6 m/s never passes the launch check: a real finding, not a sim bug.
+- **xfoil:** the apt binary can't run headless; use xfoil-python. Repanel S3021 before XFOIL.
+- **NeuralFoil:** its `control_surfaces` flap model is wrong; deflect the geometry instead.
+- **AeroBuildup:** it has no downwash, so it is too stable in pitch; Cm_alpha comes from AVL.
+- **AVL:** file paths longer than 80 characters are truncated (use relative paths). Give Nspan per section.
+- **ArduPilot SITL:** needs `empy==3.3.4`; the built-in SIM_Plane hard-codes mass and fakes propulsion, so use only the JSBSim bridge for numbers.
+- **Weak hand launch:** a throw under ~6 m/s never passes ArduPilot's GPS-speed launch check. Treat that as a real finding, not a sim bug.
 - **OpenCascade (STEP):** class locations moved between versions (`vb/cadio.py` handles 7.x and 8.x); it prints transfer statistics to stdout, which the code silences.
 - **Fusion names:** bodies need the part id at the start of the name; a re-exported assembly with renamed bodies silently becomes "unmatched" questions, which is the intended failure.
 - **Thermal numbers** come from a lumped model with +-30-50 % on convection: trust the ranking and the FAIL/WARN split more than the absolute temperatures.
