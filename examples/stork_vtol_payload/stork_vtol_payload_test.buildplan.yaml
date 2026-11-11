@@ -1,0 +1,1382 @@
+# Written by tools/intake.py from the CAD assembly and the parts list. Edit the parts list and re-run,
+# or edit here; balance options are added below as variants by tools/balance_apply.py.
+meta:
+  name: Stork VTOL payload test
+  revision: '0.4'
+  phase: Phase 1 - VTOL (quadplane)
+  base_design: Flightory Stork (STORK-USER-MANUAL, Dec 2025)
+  references:
+  - https://flightory.com/wp-content/uploads/2025/12/STORK-USER-MANUAL.pdf
+  notes: 'Spar layout inferred from the manual''s accessories list (10x1000 main, 8x1000 secondary, 2x 6x500 wing spars). Tube wall thicknesses are NOT in the manual:
+    1 mm wall assumed. Spanwise placement of the 6 mm tubes, wing z, V-tail size and all fuselage stations are ASSUMED - check against the STLs (airframe.cad_import)
+    before trusting the margins.
+
+    '
+  sourcing:
+    policy: any
+    note: asked at intake
+  intake:
+    frame:
+      origin_mm:
+      - 0.0
+      - 5.0
+      - 335.0
+      x_aft: +z
+      y_right: +x
+      z_up: +y
+    frame_confirmed: true
+    bodies: 30
+    rows: 27
+frames:
+  datum: wing root LE, centreline
+  axes: x aft, y right, z up
+airframe:
+  lifting_surfaces:
+  - name: wing
+    kind: wing
+    span: 1.62
+    area: 0.31
+    root_chord: 0.23
+    tip_chord: 0.1527
+    sweep_c4_deg:
+      value: 0.0
+      source: 'assumption: straight quarter-chord line (manual gives no sweep)'
+      range:
+      - -2.0
+      - 2.0
+    dihedral_deg:
+      value: 0.0
+      source: 'assumption: flat centre section (straight 1000 mm spars); struct prototype estimated 2 deg'
+      range:
+      - 0.0
+      - 2.0
+    twist_tip_deg:
+      value: -1.5
+      source: 'assumption: washout (not in the manual)'
+      range:
+      - -3.0
+      - 0.0
+    x_le_root: 0.0
+    z_le_root:
+      value: 0.022
+      source: 'assumption: shoulder wing on the ~100 mm fuselage'
+      range:
+      - 0.0
+      - 0.035
+    sections_per_side: 8
+    airfoil: S3021
+    thickness_ratio: 0.095
+    cl_max:
+      value: 1.15
+      source: estimate, S3021 Re~150k, 3D
+      uncertainty: 0.1
+    skin:
+      material: lw_pla_230C
+      thickness: 0.00045
+      walls: 1
+      infill: 0.04
+    spars:
+    - name: main_center
+      tube:
+        od: 0.01
+        id: 0.008
+        material: cf_pultruded
+      y_start: 0.0
+      y_end: 0.5
+      x_c: 0.25
+      source: manual 10x1000 (wall assumed)
+    - name: rear_center
+      tube:
+        od: 0.008
+        id: 0.006
+        material: cf_pultruded
+      y_start: 0.0
+      y_end: 0.5
+      x_c: 0.55
+      source: manual 8x1000 (wall assumed)
+    - name: outer_panel
+      tube:
+        od: 0.006
+        id: 0.004
+        material: cf_pultruded
+      y_start: 0.31
+      y_end: 0.81
+      x_c: 0.4
+      source: manual 6x500 (placement assumed)
+    control_surfaces:
+    - name: aileron
+      function: aileron
+      y_start: 0.38
+      y_end: 0.78
+      chord_fraction: 0.25
+      max_defl_deg: 22
+      horn_arm: 0.012
+      servo_arm: 0.01
+      servo: servo_aileron
+  - name: vtail
+    kind: v_tail
+    span:
+      value: 0.3
+      source: 'assumption: per panel along the panel (struct prototype had 0.265; 6x265 tube inside)'
+      uncertainty: 0.1
+    root_chord:
+      value: 0.15
+      source: assumption (not in the manual)
+      uncertainty: 0.1
+    tip_chord:
+      value: 0.095
+      source: assumption (not in the manual)
+      uncertainty: 0.1
+    sweep_le_deg:
+      value: 20
+      source: assumption (renders)
+      range:
+      - 10
+      - 30
+    dihedral_deg:
+      value: 35
+      source: 'assumption: 110 deg included angle'
+      range:
+      - 30
+      - 40
+    x_le_root:
+      value: 0.44
+      source: assumption (struct prototype had 0.46)
+      range:
+      - 0.42
+      - 0.46
+    z_le_root:
+      value: 0.014
+      source: assumption
+      range:
+      - 0.0
+      - 0.03
+    incidence_deg:
+      value: 0.0
+      source: 'assumption: V-tail incidence not in the manual (review m8); measure on the printed parts'
+      range:
+      - -2.0
+      - 0.0
+    sections_per_side: 4
+    airfoil: NACA0009
+    thickness_ratio: 0.09
+    skin:
+      material: lw_pla_230C
+      thickness: 0.00045
+      walls: 1
+      infill: 0.04
+    spars:
+    - name: tail_root
+      tube:
+        od: 0.008
+        id: 0.006
+        material: cf_pultruded
+      y_start: 0.01
+      y_end: 0.155
+      x_c: 0.25
+    - name: tail_main
+      tube:
+        od: 0.006
+        id: 0.004
+        material: cf_pultruded
+      y_start: 0.03
+      y_end: 0.275
+      x_c: 0.5
+    control_surfaces:
+    - name: ruddervator
+      function: ruddervator
+      y_start: 0.03
+      y_end: 0.29
+      chord_fraction: 0.3
+      max_defl_deg: 25
+      horn_arm: 0.012
+      servo_arm: 0.01
+      servo: servo_ruddervator
+  fuselage:
+    length: 0.975
+    max_width: 0.095
+    max_height: 0.1
+    x_nose: -0.335
+    exponent: 3.0
+    stations:
+    - - -0.335
+      - 0.008
+      - 0.008
+      - -0.005
+    - - -0.331
+      - 0.03
+      - 0.032
+      - -0.005
+    - - -0.32
+      - 0.052
+      - 0.056
+      - -0.004
+    - - -0.305
+      - 0.072
+      - 0.076
+      - -0.003
+    - - -0.29
+      - 0.088
+      - 0.092
+      - -0.002
+    - - -0.24
+      - 0.095
+      - 0.1
+      - 0.0
+    - - 0.15
+      - 0.095
+      - 0.1
+      - 0.0
+    - - 0.3
+      - 0.08
+      - 0.086
+      - 0.004
+    - - 0.45
+      - 0.056
+      - 0.062
+      - 0.01
+    - - 0.6
+      - 0.042
+      - 0.046
+      - 0.014
+    - - 0.64
+      - 0.04
+      - 0.044
+      - 0.014
+    skin:
+      material: lw_pla_230C
+      thickness: 0.00045
+      walls: 1
+      infill: 0.02
+    bays:
+      battery_bay:
+        center:
+        - -0.15
+        - 0.0
+        - -0.002
+        size:
+        - 0.22
+        - 0.07
+        - 0.078
+      electronics_bay:
+        center:
+        - 0.065
+        - 0.0
+        - 0.0
+        size:
+        - 0.205
+        - 0.065
+        - 0.08
+  landing:
+    method: vtol
+    sink_rate: 1.0
+    crush_stroke: 0.008
+  launch:
+    method: vtol
+    launch_speed:
+      value: 11.0
+      source: 'estimate: trained overhand throw (measure with phone video)'
+      uncertainty: 0.1
+    launch_load_factor: 3.0
+  booms:
+  - name: boom_R
+    tube:
+      shape: square
+      od: 0.01
+      id: 0.008
+      material: cf_pultruded
+    root:
+    - 0.3
+    - 0.3
+    - 0.01
+    supports:
+    - - 0.0575
+      - 0.3
+      - 0.01
+    - - 0.12
+      - 0.3
+      - 0.01
+    tip:
+    - -0.2
+    - 0.3
+    - 0.01
+    tip_mass_components:
+    - lift_pod_FR
+    - lift_pod_RR
+materials:
+  cf_pultruded:
+    kind: cfrp_tube
+    density: 1550
+    E:
+      value: 120000000000.0
+      source: TAP Plastics pultruded tube 134 GPa tensile / 127 GPa flex; 120 GPa used (generic import tubes)
+      uncertainty: 0.15
+    G:
+      value: 4000000000.0
+      source: estimate, UD pultrusion in-plane shear
+    strength_flex:
+      value: 1370000000.0
+      source: TAP Plastics pultruded tube flexural strength 200 ksi
+    strength_tension:
+      value: 1650000000.0
+      source: TAP Plastics
+    knockdown: 0.45
+    tg_C: 100
+    source: https://www.tapplastics.com/image/pdf/Pultruded_Carbon_Rods__Tubes.pdf
+  lw_pla_230C:
+    kind: printed_polymer
+    density: 750
+    E:
+      value: 1400000000.0
+      source: interp. colorFabb TDS (3350 MPa @200C/100%, 860 MPa @250C/45%) & CNC Kitchen bending modulus 1600 MPa @67%
+      uncertainty: 0.35
+    strength_tension:
+      value: 20000000.0
+      source: CNC Kitchen 24 MPa @67 % density (horizontal)
+      uncertainty: 0.35
+    strength_z:
+      value: 10000000.0
+      source: CNC Kitchen layer adhesion 13 MPa @67 %
+    knockdown: 0.5
+    tg_C: 55
+    print:
+      nozzle_C: 230
+      walls: 1
+      flow: 0.6
+    source: https://cnckitchen.com/blog/colorfabb-lw-pla-testing-foaming-pla
+  petg:
+    kind: printed_polymer
+    density: 1270
+    E:
+      value: 1900000000.0
+      source: typical PETG FDM, estimate
+    strength_tension:
+      value: 40000000.0
+      source: estimate
+    knockdown: 0.5
+    tg_C: 78
+components:
+- name: fuselage_print
+  category: structure_printed
+  mass:
+    value: 0.18
+    source: slicer weight 180 g (geometry model would give 271 g)
+  material: lw_pla_230C
+  shape: distributed
+  position:
+  - 0.1525
+  - -0.0
+  - 0.0
+  dims:
+  - 0.975
+  - 0.095
+  - 0.1
+  cad_body: P001_Fuselage print v3:1
+  geom_part: fuselage
+- name: wing_print_R
+  category: structure_printed
+  mass:
+    value: 0.154
+    source: slicer weight 154 g (geometry model would give 183 g)
+  material: lw_pla_230C
+  shape: distributed
+  position:
+  - 0.085
+  - 0.4288
+  - 0.024
+  dims:
+  - 0.19
+  - 0.7625
+  - 0.018
+  mirror_y: true
+  cad_body: P002_Wing print v3:1; P002_Wing print v3:2
+  geom_part: wing_R
+- name: vtail_print_R
+  category: structure_printed
+  mass:
+    value: 0.033
+    source: slicer weight 33 g (geometry model would give 31 g)
+  material: lw_pla_230C
+  shape: distributed
+  position:
+  - 0.53
+  - 0.12
+  - 0.1
+  dims:
+  - 0.12
+  - 0.25
+  - 0.01
+  mirror_y: true
+  cad_body: P003_V-tail print v3:1; P003_V-tail print v3:2
+  geom_part: vtail_R
+- name: hatch_misc
+  category: structure_printed
+  mass:
+    value: 0.015
+    source: slicer weight 15 g (geometry model would give 10 g)
+  material: lw_pla_230C
+  shape: distributed
+  position:
+  - -0.15
+  - -0.0
+  - 0.045
+  cad_body: P004_Hatch v3:1
+  geom: false
+- name: spar_10x8x1000
+  category: structure_tube
+  part_number: 'Flightory list: 10x1000 mm'
+  mass:
+    value: 0.044
+    source: od/id/length x 1550 kg/m3 (1 mm wall assumed)
+  material: cf_pultruded
+  position:
+  - 0.0575
+  - 0.0
+  - 0.028
+  dims:
+  - 0.01
+  - 1.0
+  - 0.01
+  cad_body: P010_Main spar v3:1
+  geom_spar: main_center
+- name: spar_8x6x1000
+  category: structure_tube
+  part_number: 'Flightory list: 8x1000 mm'
+  mass:
+    value: 0.034
+    source: od/id/length x 1550 kg/m3 (1 mm wall assumed)
+  material: cf_pultruded
+  position:
+  - 0.12
+  - 0.0
+  - 0.027
+  dims:
+  - 0.008
+  - 1.0
+  - 0.008
+  cad_body: P011_Secondary spar v3:1
+  geom_spar: rear_center
+- name: spar_6x4x500_R
+  category: structure_tube
+  part_number: 'Flightory list: 6x500 mm x2'
+  mass:
+    value: 0.012
+    source: od/id/length x 1550 kg/m3 (1 mm wall assumed)
+  material: cf_pultruded
+  position:
+  - 0.08
+  - 0.56
+  - 0.026
+  dims:
+  - 0.006
+  - 0.5
+  - 0.006
+  mirror_y: true
+  cad_body: P012_Wing spar 6x500 v3:1; P012_Wing spar 6x500 v3:2
+  geom_spar: outer_panel
+- name: tail_tubes
+  category: structure_tube
+  part_number: Flightory list
+  mass:
+    value: 0.034
+    source: estimate from tube sizes
+  material: cf_pultruded
+  position:
+  - 0.52
+  - 0.0
+  - 0.08
+  dims:
+  - 0.03
+  - 0.3
+  - 0.008
+  cad_body: P013_V-tail spars v3:1
+  geom_spar:
+  - tail_root
+  - tail_main
+- name: hinge_rods
+  category: structure_tube
+  part_number: 'Flightory list: 3x500 x2 + 3x265 x2'
+  mass:
+    value: 0.02
+    source: estimate
+  position:
+  - 0.24
+  - 0.0
+  - 0.03
+  geom: false
+- name: boom_R
+  category: structure_tube
+  part_number: 'Flightory list: 10x10x500 mm x2'
+  mass:
+    value: 0.028
+    source: estimate from tube size
+  material: cf_pultruded
+  position:
+  - 0.05
+  - 0.3
+  - 0.01
+  dims:
+  - 0.5
+  - 0.01
+  - 0.01
+  mirror_y: true
+  cad_body: P015_VTOL boom v3:1; P015_VTOL boom v3:2
+- name: lift_pod_FR
+  category: propulsion
+  part_number: T-Motor F90 1300KV
+  mass:
+    value: 0.0706
+    source: 46.6 g motor (T-Motor) + 9 g prop + 15 g mount (estimate)
+  position:
+  - -0.2
+  - 0.3
+  - 0.026
+  dims:
+  - 0.028
+  - 0.028
+  - 0.022
+  mirror_y: true
+  shape: cylinder
+  axis:
+  - 0
+  - 0
+  - 1
+  external: true
+  origin: China
+  origin_verified: false
+  cad_body: P020_Lift motor pod v3:1; P020_Lift motor pod v3:2
+  role: lift_motor
+- name: lift_pod_RR
+  category: propulsion
+  part_number: T-Motor F90 1300KV
+  mass:
+    value: 0.0706
+    source: 46.6 g motor (T-Motor) + 9 g prop + 15 g mount (estimate)
+  position:
+  - 0.3
+  - 0.3
+  - 0.026
+  dims:
+  - 0.028
+  - 0.028
+  - 0.022
+  mirror_y: true
+  shape: cylinder
+  axis:
+  - 0
+  - 0
+  - 1
+  external: true
+  origin: China
+  origin_verified: false
+  cad_body: P020_Lift motor pod v3:3; P020_Lift motor pod v3:4
+  role: lift_motor
+- name: motor_cruise
+  category: propulsion
+  part_number: BrotherHobby Avenger 2812 V5 910KV
+  mass:
+    value: 0.0765
+    source: getfpv listing 76.5 g
+  position:
+  - 0.65
+  - -0.0
+  - 0.014
+  dims:
+  - 0.03
+  - 0.035
+  - 0.035
+  shape: cylinder
+  axis:
+  - 1
+  - 0
+  - 0
+  external: true
+  thermal_limit_C: 120.0
+  origin: China
+  origin_verified: false
+  cad_body: P021_Pusher motor v3:1
+  role: cruise_motor
+- name: prop_cruise
+  category: propulsion
+  part_number: APC 10x6E
+  mass:
+    value: 0.02
+    source: APC 10x6E ~20 g
+  position:
+  - 0.668
+  - 0.0
+  - 0.014
+  geom: false
+  origin: USA
+  origin_verified: false
+- name: esc_cruise
+  category: propulsion
+  part_number: Lumenier 51A BLHeli_32
+  mass:
+    value: 0.02
+    source: estimate
+  position:
+  - 0.36
+  - -0.0
+  - -0.012
+  dims:
+  - 0.035
+  - 0.018
+  - 0.007
+  origin_verified: false
+  cad_body: P023_Pusher ESC v3:1
+  role: cruise_esc
+- name: lift_escs
+  category: propulsion
+  part_number: T-Motor Velox V50A 4in1
+  mass:
+    value: 0.025
+    source: estimate
+  position:
+  - -0.1
+  - -0.0
+  - -0.02
+  dims:
+  - 0.045
+  - 0.042
+  - 0.008
+  bay: battery_bay
+  origin: China
+  origin_verified: false
+  cad_body: P024_Lift ESC 4in1 v3:1
+  role: lift_esc
+- name: battery
+  category: energy
+  part_number: Molicel INR21700-P50B 4S2P
+  mass:
+    value: 0.6
+    source: 8 x 69-71 g + nickel/leads
+  position:
+  - -0.21
+  - 0.0
+  - -0.004
+  dims:
+  - 0.09
+  - 0.046
+  - 0.073
+  bay: battery_bay
+  thermal_limit_C: 60.0
+  origin: Taiwan
+  movable: true
+  origin_verified: false
+  cad_body: P030_Battery 4S2P v3:1
+  role: battery
+- name: flight_controller
+  category: avionics
+  part_number: SpeedyBee F405 Wing
+  mass:
+    value: 0.035
+    source: estimate
+  position:
+  - 0.02
+  - 0.0
+  - -0.017
+  dims:
+  - 0.052
+  - 0.032
+  - 0.019
+  bay: electronics_bay
+  power_W: 2.5
+  origin: China
+  origin_verified: false
+  cad_body: P040_Flight controller v3:1
+  role: fc
+- name: gps
+  category: avionics
+  part_number: Matek M10Q-5883
+  mass:
+    value: 0.008
+    source: estimate
+  position:
+  - 0.23
+  - 0.0
+  - 0.04
+  dims:
+  - 0.02
+  - 0.02
+  - 0.008
+  power_W: 0.3
+  origin: China
+  external: true
+  movable: false
+  origin_verified: false
+  cad_body: P041_GPS v3:1
+  role: gps
+- name: telemetry_rx
+  category: avionics
+  part_number: Matek R24-D
+  mass:
+    value: 0.003
+    source: estimate
+  position:
+  - 0.11
+  - 0.0
+  - -0.018
+  dims:
+  - 0.02
+  - 0.013
+  - 0.004
+  bay: electronics_bay
+  power_W: 0.5
+  origin: China
+  origin_verified: false
+  cad_body: P042_Receiver v3:1
+  role: rx
+- name: vtx
+  category: avionics
+  part_number: Walksnail Avatar VTX
+  mass:
+    value: 0.03
+    source: estimate
+  position:
+  - 0.14
+  - -0.0
+  - 0.01
+  dims:
+  - 0.033
+  - 0.033
+  - 0.011
+  bay: electronics_bay
+  thermal_limit_C: 85.0
+  power_W: 8.0
+  origin: China
+  origin_verified: false
+  cad_body: P043_Video transmitter v3:1
+  role: vtx
+- name: camera
+  category: payload
+  part_number: Walksnail Avatar camera
+  mass:
+    value: 0.01
+    source: estimate
+  position:
+  - -0.31
+  - -0.0
+  - -0.008
+  dims:
+  - 0.019
+  - 0.019
+  - 0.02
+  power_W: 0.7
+  origin: China
+  movable: false
+  origin_verified: false
+  cad_body: P044_FPV camera v3:1
+  role: camera
+- name: servo_aileron
+  category: servo
+  part_number: EMAX ES08MA II
+  mass:
+    value: 0.012
+    source: EMAX datasheet 12 g
+  position:
+  - 0.058
+  - 0.56
+  - 0.027
+  dims:
+  - 0.023
+  - 0.025
+  - 0.01
+  mirror_y: true
+  origin: China
+  origin_verified: false
+  cad_body: P050_Aileron servo v3:1; P050_Aileron servo v3:2
+  role: servo
+  torque_stall_Nm: 0.157
+  supply_V: 4.8
+- name: servo_ruddervator
+  category: servo
+  part_number: EMAX ES08MA II
+  mass:
+    value: 0.012
+    source: EMAX datasheet 12 g
+  position:
+  - 0.42
+  - 0.015
+  - 0.008
+  dims:
+  - 0.023
+  - 0.012
+  - 0.025
+  mirror_y: true
+  origin: China
+  external: true
+  origin_verified: false
+  cad_body: P051_Ruddervator servo v3:1; P051_Ruddervator servo v3:2
+  role: servo
+  torque_stall_Nm: 0.157
+  supply_V: 4.8
+- name: wiring
+  category: wiring
+  mass:
+    value: 0.05
+    source: estimate
+  position:
+  - 0.08
+  - 0.0
+  - -0.033
+  geom: false
+- name: lift_wiring
+  category: wiring
+  mass:
+    value: 0.045
+    source: estimate
+  position:
+  - 0.05
+  - 0.0
+  - 0.0
+  geom: false
+- name: hardware
+  category: hardware
+  part_number: Flightory list
+  mass:
+    value: 0.04
+    source: estimate
+  position:
+  - 0.06
+  - 0.0
+  - 0.01
+  geom: false
+- name: inspection_camera
+  category: payload
+  mass:
+    value: 0.22
+    source: assumed test value
+  position:
+  - -0.3
+  - 0.0
+  - -0.01
+  geom: false
+  power_W: 3.0
+  movable: false
+  role: camera
+propulsion:
+  units:
+  - name: cruise
+    role: cruise
+    count: 1
+    positions:
+    - - 0.668
+      - -0.0
+      - 0.014
+    thrust_axis:
+    - -1
+    - 0
+    - 0
+    motor:
+      model: BrotherHobby Avenger 2812 V5 910KV
+      kv:
+        value: 910
+        source: manual
+      rm:
+        value: 0.08
+        source: 'estimate: 2810 V5 910KV lists 89 mOhm; 2812 assumed slightly lower'
+        uncertainty: 0.15
+      i0:
+        value: 0.85
+        source: 'estimate: 2810 V5 0.82 A @10 V'
+        uncertainty: 0.2
+      i0_ref_V: 10
+      i_max: 46
+      p_max: 1170
+      mass: 0.0765
+      rotor_inertia: 1.2e-05
+      loss_limit_W: 30
+    prop:
+      model: APC 10x6E
+      diameter: 0.254
+      pitch: 0.1524
+      blades: 2
+      data: embedded:apc_10x6e
+      ct_scale: 0.92
+      cp_scale: 1.0
+      inertia: 2.3e-05
+    esc:
+      model: Lumenier 51A BLHeli_32
+      i_cont: 51
+      i_burst: 60
+      r_on: 0.004
+    wiring:
+      awg: 14
+      length: 0.35
+      connector: XT60
+      connector_i_cont: 60
+  - name: lift
+    role: lift
+    count: 4
+    positions:
+    - - -0.2
+      - 0.3
+      - 0.046
+    - - 0.3
+      - -0.3
+      - 0.046
+    - - -0.2
+      - -0.3
+      - 0.046
+    - - 0.3
+      - 0.3
+      - 0.046
+    thrust_axis:
+    - 0
+    - 0
+    - 1
+    motor:
+      model: T-Motor F90 1300KV
+      kv: 1300
+      rm:
+        value: 0.076
+        source: T-Motor / flyingtech listing 76 mOhm
+      i0:
+        value: 0.95
+        source: 0.95 A @10 V
+      i0_ref_V: 10
+      i_max: 45.1
+      p_max: 1059
+      mass: 0.0466
+      rotor_inertia: 8.0e-06
+      loss_limit_W: 35
+    prop:
+      model: APC 7x5E (stand-in for 7in lift prop)
+      diameter: 0.1778
+      pitch: 0.127
+      data: embedded:apc_7x5e
+      ct_scale: 0.92
+      cp_scale: 1.0
+    esc:
+      model: T-Motor Velox V50A 4in1
+      i_cont: 50
+      r_on: 0.004
+    wiring:
+      awg: 16
+      length: 0.45
+      connector: solder
+      connector_i_cont: 40
+energy:
+  cell:
+    model: Molicel INR21700-P50B
+    chemistry: li_ion_nmc
+    capacity_Ah: 5.0
+    r_dc:
+      value: 0.0128
+      source: 'Molicel TDS: 12.8 mOhm DC @50 % SOC (typ.)'
+    i_cont: 60
+    v_nom: 3.6
+    v_max: 4.2
+    v_min: 2.5
+    mass: 0.07
+  series: 4
+  parallel: 2
+  pack_wiring_r: 0.006
+  usable_fraction: 0.85
+  reserve_fraction: 0.2
+avionics:
+  autopilot:
+    board: SpeedyBee F405 Wing
+    firmware: ArduPlane
+    firmware_version: Plane-4.7.2
+    frame_class: quadplane
+  sensors:
+  - gps
+  - airspeed_digital
+  - baro
+  - compass
+  avionics_power_W: 12.0
+  params:
+    AIRSPEED_MIN: 12
+    AIRSPEED_MAX: 22
+    AIRSPEED_CRUISE: 13
+    ROLL_LIMIT_DEG: 45
+envelope:
+  v_stall_target: 9.0
+  v_cruise: 13.0
+  v_ne: 25.0
+  v_max_level: 22.0
+  n_limit_pos: 4.0
+  n_limit_neg: -1.5
+  fos: 1.5
+  gust_u_de:
+    at_v_cruise:
+      value: 7.5
+      source: assumption (team value; CS-VLA 333(c) uses 15.24 m/s at VC)
+      uncertainty: 0.5
+    at_v_ne:
+      value: 5.0
+      source: assumption (team value; CS-VLA 333(c) uses 7.62 m/s at VD)
+      uncertainty: 0.5
+  max_bank_deg: 45
+environment_cases:
+- name: std_day
+  altitude_msl: 0
+  temperature_C: 15
+  solar_heating_dT_C:
+    value: 10
+    source: 'assumption: skin in sun, light airflow'
+    range:
+    - 5
+    - 20
+  wind_mean: 4
+  wind_gust: 8
+  turbulence: light
+- name: hot_valley_summer
+  altitude_msl: 50
+  temperature_C: 42
+  solar_heating_dT_C:
+    value: 20
+    source: 'assumption: dark printed skin parked in full sun (ground soak, not in flight)'
+    range:
+    - 10
+    - 30
+  wind_mean: 6
+  wind_gust: 11
+  turbulence: moderate
+- name: cold_morning
+  altitude_msl: 0
+  temperature_C: 2
+  solar_heating_dT_C: 0
+  wind_mean: 3
+  wind_gust: 6
+  turbulence: light
+- name: texas_gulf_summer
+  altitude_msl: 30
+  temperature_C: 40
+  solar_heating_dT_C:
+    value: 20
+    source: 'assumption: printed skin parked in full sun'
+    range:
+    - 10
+    - 30
+  wind_mean: 8
+  wind_gust: 13
+  turbulence: moderate
+- name: west_texas_summer
+  altitude_msl: 1200
+  temperature_C: 45
+  solar_heating_dT_C:
+    value: 20
+    source: 'assumption: printed skin parked in full sun'
+    range:
+    - 10
+    - 30
+  wind_mean: 10
+  wind_gust: 15
+  turbulence: moderate
+missions:
+- name: canal_inspection_out_and_back
+  environment: std_day
+  segments:
+  - kind: launch
+  - kind: climb
+    altitude: 100
+  - kind: cruise
+    distance: 20000
+    airspeed: 13
+  - kind: loiter
+    duration: 300
+    airspeed: 12
+  - kind: cruise
+    distance: 20000
+    airspeed: 13
+  - kind: land
+  reserve_fraction: 0.2
+analysis:
+  cg_target_x:
+    value: 0.047
+    source: 'manual: CG 47 mm from LE at wing root'
+  cg_tolerance_mac: 0.03
+  mass_model: geometry
+  static_margin_range:
+  - 0.05
+  - 0.2
+  aero:
+    speeds:
+    - 10
+    - 14
+    - 20
+    excrescence_factor: 1.1
+    prop_parking: crosswise_worst
+    cd0_uncertainty:
+      value: 0.5
+      uncertainty: 0.5
+      source: 'assumption (team): pessimistic drag band CD0 x 1.5 for a printed airframe (seams, hinge gaps, antennas, pusher prop in the fuselage/V-tail wake) until
+        the F2/F3 flights'
+  cfd:
+    kind: wingbody
+    kind_full: wingbodytail
+    alphas_standard:
+    - 2
+    - 7
+    alphas_full:
+    - 0
+    - 4
+    - 8
+    surf_level:
+    - 5
+    - 6
+    surf_level_full:
+    - 6
+    - 7
+    iters: 400
+  sitl:
+    survey_alt: 60
+    l1_periods_standard:
+    - 10
+    - 15
+    l1_periods_full:
+    - 10
+    - 13
+    - 15
+    - 18
+    - 22
+    launch_accel: 25
+    launch_duration: 0.45
+  vtol_auw_cases_kg:
+  - 2.2
+  - 2.6
+  - 3.1
+variants:
+  balA:
+    airframe:
+      fuselage:
+        x_nose: -0.28298
+        stations:
+        - - -0.28298
+          - 0.008
+          - 0.008
+          - -0.005
+        - - -0.27898
+          - 0.03
+          - 0.032
+          - -0.005
+        - - -0.26798
+          - 0.052
+          - 0.056
+          - -0.004
+        - - -0.25298
+          - 0.072
+          - 0.076
+          - -0.003
+        - - -0.23798
+          - 0.088
+          - 0.092
+          - -0.002
+        - - -0.18798
+          - 0.095
+          - 0.1
+          - 0.0
+        - - 0.20202
+          - 0.095
+          - 0.1
+          - 0.0
+        - - 0.35202
+          - 0.08
+          - 0.086
+          - 0.004
+        - - 0.50202
+          - 0.056
+          - 0.062
+          - 0.01
+        - - 0.65202
+          - 0.042
+          - 0.046
+          - 0.014
+        - - 0.69202
+          - 0.04
+          - 0.044
+          - 0.014
+        bays:
+          battery_bay:
+            center:
+            - -0.09798
+            - 0.0
+            - -0.002
+          electronics_bay:
+            center:
+            - 0.11702
+            - 0.0
+            - 0.0
+      lifting_surfaces:
+      - name: vtail
+        x_le_root: 0.49202
+    components:
+    - name: battery
+      position:
+      - -0.15798
+      - 0.0
+      - -0.004
+    - name: camera
+      position:
+      - -0.25798
+      - 0.0
+      - -0.008
+    - name: esc_cruise
+      position:
+      - 0.41202
+      - 0.0
+      - -0.012
+    - name: flight_controller
+      position:
+      - 0.07202
+      - 0.0
+      - -0.017
+    - name: fuselage_print
+      position:
+      - 0.20452
+      - 0.0
+      - 0.0
+    - name: gps
+      position:
+      - 0.28202
+      - 0.0
+      - 0.04
+    - name: hardware
+      position:
+      - 0.11202
+      - 0.0
+      - 0.01
+    - name: hatch_misc
+      position:
+      - -0.09798
+      - 0.0
+      - 0.045
+    - name: hinge_rods
+      position:
+      - 0.29202
+      - 0.0
+      - 0.03
+    - name: inspection_camera
+      position:
+      - -0.24798
+      - 0.0
+      - -0.01
+    - name: lift_escs
+      position:
+      - -0.04798
+      - 0.0
+      - -0.02
+    - name: lift_wiring
+      position:
+      - 0.10202
+      - 0.0
+      - 0.0
+    - name: motor_cruise
+      position:
+      - 0.70202
+      - 0.0
+      - 0.014
+    - name: prop_cruise
+      position:
+      - 0.72002
+      - 0.0
+      - 0.014
+    - name: servo_ruddervator
+      position:
+      - 0.47202
+      - 0.015
+      - 0.008
+    - name: tail_tubes
+      position:
+      - 0.57202
+      - 0.0
+      - 0.08
+    - name: telemetry_rx
+      position:
+      - 0.16202
+      - 0.0
+      - -0.018
+    - name: vtail_print_R
+      position:
+      - 0.58202
+      - 0.12
+      - 0.1
+    - name: vtx
+      position:
+      - 0.19202
+      - 0.0
+      - 0.01
+    - name: wiring
+      position:
+      - 0.13202
+      - 0.0
+      - -0.033
+    propulsion:
+      units:
+      - name: cruise
+        positions:
+        - - 0.72002
+          - -0.0
+          - 0.014
+    meta:
+      phase: 'balance option: A Move the wing 52 mm forward on the fuselage'
+  balB:
+    components_add:
+    - name: ballast
+      category: ballast
+      mass:
+        value: 0.1458
+        source: 'auto-balance: last-resort ballast'
+      position:
+      - 0.59
+      - 0.0
+      - 0.0
+      dims:
+      - 0.02
+      - 0.02
+      - 0.01
+      geom: false
+    meta:
+      phase: 'balance option: B Add 146 g of ballast in the tail'
+  balC:
+    components:
+    - name: battery
+      position:
+      - -0.132
+      - 0.0
+      - -0.004
+    - name: esc_cruise
+      position:
+      - 0.39
+      - 0.0
+      - -0.012
+    - name: flight_controller
+      position:
+      - 0.1195
+      - 0.0
+      - -0.017
+    - name: lift_escs
+      position:
+      - -0.0625
+      - 0.0
+      - -0.02
+    - name: telemetry_rx
+      position:
+      - 0.1575
+      - 0.0
+      - -0.018
+    - name: vtx
+      position:
+      - 0.151
+      - 0.0
+      - 0.01
+    components_add:
+    - name: ballast
+      category: ballast
+      mass:
+        value: 0.0495
+        source: 'auto-balance: ballast for the remainder'
+      position:
+      - 0.59
+      - 0.0
+      - 0.0
+      dims:
+      - 0.02
+      - 0.02
+      - 0.01
+      geom: false
+    meta:
+      phase: 'balance option: C Move internal parts as far as they go, then 49 g of ballast in the tail'

@@ -85,7 +85,7 @@ def summary():
              simpleFoam=shutil.which("simpleFoam"), foam_shim=foam_shim(), ccx=ccx())
     py = {m: python_has(m) for m in ("numpy", "scipy", "yaml", "jsonschema", "matplotlib", "trimesh", "manifold3d",
                                       "mapbox_earcut", "fcl", "shapely", "aerosandbox", "neuralfoil", "xfoil",
-                                      "jsbsim", "pymavlink", "pandas", "PIL", "build123d")}
+                                      "jsbsim", "pymavlink", "pandas", "PIL", "build123d", "OCP")}
     core = all(py[m] for m in ("numpy", "scipy", "yaml", "jsonschema", "matplotlib"))
     geom = core and all(py[m] for m in ("trimesh", "manifold3d", "mapbox_earcut", "shapely"))
     stages = {
@@ -98,6 +98,8 @@ def summary():
         "sitl": py["jsbsim"] and py["pymavlink"] and py["pandas"] and bool(t["arduplane"]),
         "structures.calculix_crosscheck": bool(t["ccx"]),
         "geometry.step_import": py["build123d"],
+        "vtol": core, "thermal": core, "balance": core,
+        "intake.step (tools/intake.py, cadquery-ocp)": core and py["OCP"],
     }
     return dict(tools=t, python=py, stages=stages)
 

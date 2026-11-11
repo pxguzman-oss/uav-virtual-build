@@ -70,6 +70,22 @@ def run(ctx):
     ctx.gate("design CG target given (analysis.cg_target_x)", cg_t is not None, True, "bool", "WARN",
              note="needed for the CG gate; manual value preferred")
 
+    # ---- sourcing policy (asked at intake: any part, US-made only, or NDAA-style screening) -------------
+    from ..lib import balance as B
+    src = (plan.get("meta") or {}).get("sourcing") or {}
+    pol = src.get("policy")
+    ctx.gate("parts sourcing policy set (meta.sourcing.policy: any | us_made | ndaa)", pol in ("any", "us_made", "ndaa"), True, "bool", "WARN",
+             note="ASK THE USER whether any part is allowed or only US-made parts; swaps proposed by the balance stage follow it")
+    if pol in ("us_made", "ndaa"):
+        bought = [c for c in plan["components"] if c.get("category") in B.PURCHASED]
+        bad_o = [f"{c['name']} ({c.get('origin')})" for c in bought if c.get("origin") and not B.origin_ok(c.get("origin"), pol)[0]]
+        unk = [c["name"] for c in bought if not c.get("origin")]
+        unv = [c["name"] for c in bought if c.get("origin") and B.origin_ok(c.get("origin"), pol)[0] and not c.get("origin_verified")]
+        ctx.gate(f"bought parts whose stated origin breaks the '{pol}' policy", len(bad_o), 0, "<=", "FAIL", note=", ".join(bad_o[:8]),
+                 drivers=["/meta/sourcing/policy"])
+        ctx.gate(f"bought parts with no origin on the parts list (policy '{pol}')", len(unk), 0, "<=", "WARN", note=", ".join(unk[:8]))
+        ctx.gate("bought parts whose origin passes but is not verified", len(unv), 0, "<=", "WARN",
+                 note=", ".join(unv[:8]) + (" - a screening aid, not a compliance determination" if unv else ""))
     soft = P.soft_inputs(plan)
     uns = P.unsourced_masses(plan)
     ctx.gate("soft (estimated) inputs", len(soft), 0, "info", "INFO", note="listed in the report; measure the top ones first")

@@ -1,0 +1,91 @@
+{
+ "frame": {
+  "origin_mm": [
+   0.0,
+   5.0,
+   335.0
+  ],
+  "x_aft": "+z",
+  "y_right": "+x",
+  "z_up": "+y"
+ },
+ "cad": [
+  "examples/stork_vtol_flightory/stork_vtol_assembly.step"
+ ],
+ "components": {
+  "fuselage_print": [
+   "P001_Fuselage print v3:1"
+  ],
+  "wing_print_R": [
+   "P002_Wing print v3:1",
+   "P002_Wing print v3:2"
+  ],
+  "vtail_print_R": [
+   "P003_V-tail print v3:1",
+   "P003_V-tail print v3:2"
+  ],
+  "hatch_misc": [
+   "P004_Hatch v3:1"
+  ],
+  "spar_10x8x1000": [
+   "P010_Main spar v3:1"
+  ],
+  "spar_8x6x1000": [
+   "P011_Secondary spar v3:1"
+  ],
+  "spar_6x4x500_R": [
+   "P012_Wing spar 6x500 v3:1",
+   "P012_Wing spar 6x500 v3:2"
+  ],
+  "tail_tubes": [
+   "P013_V-tail spars v3:1"
+  ],
+  "boom_R": [
+   "P015_VTOL boom v3:1",
+   "P015_VTOL boom v3:2"
+  ],
+  "lift_pod_FR": [
+   "P020_Lift motor pod v3:1",
+   "P020_Lift motor pod v3:2"
+  ],
+  "lift_pod_RR": [
+   "P020_Lift motor pod v3:3",
+   "P020_Lift motor pod v3:4"
+  ],
+  "motor_cruise": [
+   "P021_Pusher motor v3:1"
+  ],
+  "esc_cruise": [
+   "P023_Pusher ESC v3:1"
+  ],
+  "lift_escs": [
+   "P024_Lift ESC 4in1 v3:1"
+  ],
+  "battery": [
+   "P030_Battery 4S2P v3:1"
+  ],
+  "flight_controller": [
+   "P040_Flight controller v3:1"
+  ],
+  "gps": [
+   "P041_GPS v3:1"
+  ],
+  "telemetry_rx": [
+   "P042_Receiver v3:1"
+  ],
+  "vtx": [
+   "P043_Video transmitter v3:1"
+  ],
+  "camera": [
+   "P044_FPV camera v3:1"
+  ],
+  "servo_aileron": [
+   "P050_Aileron servo v3:1",
+   "P050_Aileron servo v3:2"
+  ],
+  "servo_ruddervator": [
+   "P051_Ruddervator servo v3:1",
+   "P051_Ruddervator servo v3:2"
+  ]
+ }
+}

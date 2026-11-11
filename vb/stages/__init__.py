@@ -10,7 +10,7 @@ code   : source files/dirs hashed into the key (code changes invalidate the cach
 
 STAGES = [
     dict(name="ingest", deps=[], soft=[], cheap=True, keys=["/"], fid=False, timeout=300,
-         code=["vb/stages/ingest.py", "vb/plan.py", "schema"]),
+         code=["vb/stages/ingest.py", "vb/plan.py", "schema", "vb/lib/balance.py"]),
     dict(name="geometry", deps=["ingest"], soft=[], cheap=False, fid=True, timeout=2400,
          keys=["/airframe", "/components", "/materials", "/propulsion/units", "/analysis/cg_target_x", "/meta/name"],
          code=["vb/stages/geometry.py", "vb/adapters/plan2geom.py", "vb/lib/geom"]),
@@ -24,6 +24,15 @@ STAGES = [
     dict(name="propulsion", deps=["mass"], soft=["aero_lowfi"], cheap=True, fid=False, timeout=600,
          keys=["/propulsion", "/energy", "/envelope", "/environment_cases", "/missions", "/analysis", "/gates"],
          code=["vb/stages/propulsion.py", "vb/lib/struct/propulsion.py", "data/props"]),
+    dict(name="vtol", deps=["mass", "propulsion"], soft=["aero_lowfi"], cheap=True, fid=False, timeout=600,
+         keys=["/propulsion", "/energy", "/envelope", "/environment_cases", "/airframe", "/analysis", "/avionics", "/gates"],
+         code=["vb/stages/vtol.py", "vb/lib/struct/propulsion.py", "data/props"]),
+    dict(name="thermal", deps=["mass", "propulsion"], soft=["vtol"], cheap=True, fid=False, timeout=600,
+         keys=["/components", "/materials", "/airframe/fuselage", "/propulsion", "/energy", "/avionics", "/environment_cases",
+               "/missions", "/analysis", "/gates"],
+         code=["vb/stages/thermal.py", "vb/lib/thermal.py"]),
+    dict(name="balance", deps=["mass"], soft=["clash", "aero_lowfi", "propulsion", "vtol"], cheap=True, fid=False, timeout=900,
+         keys=["/"], code=["vb/stages/balance.py", "vb/lib/balance.py", "data/catalog"]),
     dict(name="structures", deps=["mass", "propulsion"], soft=["aero_lowfi"], cheap=True, fid=False, timeout=600,
          keys=["/airframe", "/materials", "/components", "/envelope", "/environment_cases", "/gates"],
          code=["vb/stages/structures.py", "vb/lib/struct/structures.py"]),
@@ -38,7 +47,7 @@ STAGES = [
          keys=["/missions", "/environment_cases", "/analysis/sitl", "/envelope"],
          code=["vb/stages/sitl.py", "vb/lib/sim", "data/ardupilot"]),
     dict(name="report", deps=[], soft=["ingest", "geometry", "mass", "clash", "aero_lowfi", "propulsion", "structures",
-                                       "cfd", "flightmodel", "sitl"], cheap=True, fid=True, timeout=900,
+                                       "cfd", "flightmodel", "sitl", "vtol", "thermal", "balance"], cheap=True, fid=True, timeout=900,
          keys=["/"], code=["vb/stages/report.py"]),
 ]
 

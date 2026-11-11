@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: cad-and-parts-list-to-verdict
+expected_outcome: |
+  The CAD and parts list go through tools/intake.py into a plan, the pipeline runs at quick fidelity, and the answer leads with the verdict, the CG against the design CG and a set of balance options. The parameter file is not handed over.

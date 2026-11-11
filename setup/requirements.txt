@@ -15,6 +15,9 @@ rtree
 shapely
 scikit-image
 networkx
+# STEP assemblies in and out (tools/intake.py, tools/balance_apply.py --step-out)
+cadquery-ocp
+openpyxl
 # aero (AeroSandbox + NeuralFoil)
 aerosandbox>=4.2
 neuralfoil

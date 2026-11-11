@@ -24,6 +24,34 @@ If `python` lacks the packages, run.py re-executes itself with the project venv,
 `setup/paths.env` (VB_VENV) or `./.venv`.
 
 
+
+NEW: CAD + PARTS LIST IN, BALANCE OPTIONS OUT
+---------------------------------------------
+    python tools/intake.py --cad assembly.step --parts parts.csv --base BASE.yaml --frame "..." --policy any --out work/x
+    python run.py work/x/<name>.buildplan.yaml
+    python tools/balance_apply.py work/x/<name>.buildplan.yaml --from out/<name>/base/balance --option B
+    python run.py work/x/<name>.buildplan.yaml --variant balB
+
+  tools/intake.py         Fusion STEP assembly + parts list (CSV/XLSX) + base plan -> build plan, with a QUESTIONS
+                          list for anything uncertain (unmatched bodies, missing masses, guessed frame)
+  stage vtol              quadplane: per-motor hover load from the real CG, thrust margin in thin air, roll/pitch/yaw
+                          authority, crosswind hover, transition, one lift motor out
+  stage thermal           lumped thermal network over the mission (hot and cold case, nominal and pessimistic),
+                          print softening temperature, vent sizing, parts to instrument
+  stage balance           ranked ways to put the CG on target and the lift-thrust centre on the CG, each with pros,
+                          cons, a Fusion change list and a variant overlay
+  tools/balance_apply.py  turns an option into a plan variant to re-run, and writes the re-positioned STEP
+  sourcing policy         meta.sourcing.policy: any | us_made | ndaa screens the parts list and the proposed swaps
+  approval gate           derived.param is released into the report only when meta.approval.design_approved is true
+                          and the run is GO / CONDITIONAL GO
+
+Workflow, parts-list columns and Fusion export rules: docs/CAD_TO_SIM.md. Windows desktop (WSL2) setup:
+docs/DESKTOP_SETUP.md. Worked example: examples/stork_vtol_flightory/. Tests that need no CFD or SITL:
+    .venv/bin/python tests/test_cad_balance_thermal.py
+
+Stage order: ingest geometry mass clash aero_lowfi propulsion vtol thermal balance structures cfd flightmodel sitl report
+
+
 1. COMMAND LINE
 ---------------
     python run.py PLAN.yaml [--variant NAME] [--fidelity quick|standard|full]
